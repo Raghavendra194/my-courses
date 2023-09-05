@@ -1,0 +1,3 @@
+npm install nodemon--save - > It will be installed production packages
+npm install nodemon--save--dev - > It will be installed only devlopment packages
+npm install - g nodemon -> installed globally to auto save files
