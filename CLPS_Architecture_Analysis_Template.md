@@ -1,198 +1,212 @@
-# CLPS Enterprise Architecture & Repository Analysis Document
+This application belongs to a manufacturing and label tracking system (CLPS).
 
-> **IMPORTANT ANALYSIS CONSTRAINT**
->
-> - Do NOT make assumptions.
-> - Every statement must be supported by source code evidence.
-> - Clearly distinguish Confirmed Findings, Unknowns, and Assumptions Avoided.
-> - For every finding provide: File Name, Class Name, Method Name, and Source Code Evidence.
+Pay special attention to:
 
----
+- LT (Label Tracking) generation lifecycle
+- Batch management lifecycle
+- Print Master retrieval
+- Order validation workflow
+- Machine validation workflow
+- Site resolution workflow
+- Label printing workflow
+- Database transaction boundaries
+- Concurrency control mechanisms
+- Manufacturing traceability requirements
 
-# SECTION 1 - EXECUTIVE SUMMARY
+Produce a dedicated section called:
 
-## Application Purpose
+"LT Creation End-to-End Workflow Analysis"
 
-## Business Objectives
+Show exactly how CreateLTController → CreateLTService → CreateLTContextBuilder → CreateLTInternalService executes, including validations, database updates, transaction flow, and error handling.
 
-## Target Users
 
-## Business Capabilities
+Act as a Principal Software Architect, Enterprise Architect, Solution Architect, Security Architect, Technical Lead, and Technical Writer.
 
-## Key Workflows
+Analyze the entire repository and generate comprehensive enterprise-grade technical documentation.
 
-## High-Level Architecture Summary
+Repository Analysis Requirements
 
----
+1. Scan the complete solution:
+   - Solution (.sln)
+   - All .csproj files
+   - Controllers
+   - Services
+   - Interfaces
+   - Repositories
+   - Models
+   - DTOs
+   - Validators
+   - Middleware
+   - Background Services
+   - Database Access Layer
+   - Entity Framework Models
+   - Migrations
+   - SQL Scripts
+   - Configuration Files
+   - appsettings.json
+   - Program.cs
+   - Startup.cs
+   - Docker Files
+   - Kubernetes Files
+   - YAML Pipelines
+   - Unit Tests
+   - Integration Tests
 
-# SECTION 2 - SYSTEM OVERVIEW
+2. Build a complete architectural understanding of:
+   - Business functionality
+   - Application architecture
+   - Data architecture
+   - Integration architecture
+   - Security architecture
+   - Deployment architecture
 
-## Functional Overview
+3. Do NOT make assumptions.
+   Every statement must be based on source code evidence.
 
-## Major Modules
+4. For every finding provide:
+   - File name
+   - Class name
+   - Method name (if applicable)
+   - Evidence from source code
 
-## User Interactions
+5. Clearly identify:
+   - Confirmed findings
+   - Unknowns
+   - Assumptions avoided
 
-## Data Lifecycle
+Generate the following documentation.
 
-## Non-Functional Requirements Discovered
+====================================================================
+SECTION 1 - EXECUTIVE SUMMARY
+====================================================================
 
----
+Provide:
 
-# SECTION 3 - HIGH LEVEL DESIGN (HLD)
+- Application purpose
+- Business objectives
+- Target users
+- Business capabilities
+- Key workflows
+- High-level architecture summary
 
-## Architecture Style Assessment
+====================================================================
+SECTION 2 - SYSTEM OVERVIEW
+====================================================================
 
-Evaluate:
+Document:
+
+- Functional overview
+- Major modules
+- User interactions
+- Data lifecycle
+- Non-functional requirements discovered
+
+====================================================================
+SECTION 3 - HIGH LEVEL DESIGN
+====================================================================
+
+Identify architecture style:
 
 - Monolithic
 - Layered
 - N-Tier
 - Clean Architecture
-- Hexagonal Architecture
+- Hexagonal
 - Microservices
 - Event Driven
 - CQRS
 
-### Evidence-Based Conclusion
+Explain why.
 
-## Context Diagram
+Generate Mermaid diagrams:
 
-```mermaid
-flowchart TD
-```
+- Context Diagram
+- System Architecture Diagram
+- Component Diagram
 
-## System Architecture Diagram
+====================================================================
+SECTION 4 - SOLUTION STRUCTURE
+====================================================================
 
-```mermaid
-flowchart TD
-```
+For every project:
 
-## Component Diagram
+- Project name
+- Project type
+- Responsibility
+- Dependencies
 
-```mermaid
-flowchart TD
-```
+For every major folder:
 
----
+- Purpose
+- Key classes
 
-# SECTION 4 - SOLUTION STRUCTURE
+Create folder hierarchy documentation.
 
-## Solution Overview
+====================================================================
+SECTION 5 - TECHNOLOGY STACK
+====================================================================
 
-### Projects
+Identify:
 
-| Project | Type | Responsibility | Dependencies |
-|----------|----------|----------|----------|
-
-### Folder Hierarchy
-
-```text
-Solution
-```
-
-### Major Folder Analysis
-
-| Folder | Purpose | Key Classes |
-|----------|----------|----------|
-
----
-
-# SECTION 5 - TECHNOLOGY STACK
-
-## Platform
-
-- .NET Version
-- ASP.NET Core Version
-- C# Version
-
-## Data Access
-
+- .NET version
+- ASP.NET Core version
+- C# version
 - ORM
 - Database
-- Connection Strategy
+- Logging frameworks
+- Caching technologies
+- Authentication frameworks
+- API frameworks
 
-## Application Services
+Create a complete NuGet package inventory.
 
-- Logging Frameworks
-- Caching Technologies
-- Authentication Frameworks
-- Authorization Frameworks
-- API Frameworks
+====================================================================
+SECTION 6 - LOW LEVEL DESIGN
+====================================================================
 
-## NuGet Package Inventory
-
-| Package | Version | Purpose |
-|----------|----------|----------|
-
----
-
-# SECTION 6 - LOW LEVEL DESIGN (LLD)
-
-## Component Analysis
-
-For each component document:
+For each component:
 
 - Responsibility
 - Interfaces
 - Implementations
 - Dependencies
-- Public Methods
-- Data Flow
+- Public methods
+- Data flow
 
-## Dependency Diagrams
+Generate dependency diagrams.
 
-```mermaid
-graph TD
-```
+====================================================================
+SECTION 7 - DATABASE DESIGN
+====================================================================
 
----
+Analyze:
 
-# SECTION 7 - DATABASE DESIGN
+- Entities
+- DbContexts
+- Migrations
+- Tables
+- Stored Procedures
+- Views
 
-## Database Architecture
-
-### DbContexts
-
-### Entities
-
-### Tables
-
-### Views
-
-### Stored Procedures
-
-### Migrations
-
-## Constraints
+Document:
 
 - Primary Keys
 - Foreign Keys
-- Unique Constraints
+- Constraints
 - Indexes
 
-## Mermaid ER Diagram
+Generate Mermaid ER Diagram.
 
-```mermaid
-erDiagram
-```
+====================================================================
+SECTION 8 - API DOCUMENTATION
+====================================================================
 
----
+For every endpoint provide:
 
-# SECTION 8 - API DOCUMENTATION
-
-## API Inventory
-
-| Route | Verb | Controller | Service | Request | Response |
-|---------|---------|---------|---------|---------|---------|
-
-### Endpoint Details
-
-#### Route
-
+- Route
 - HTTP Verb
 - Controller
-- Service Called
+- Service called
 - Request Model
 - Response Model
 - Validation
@@ -200,314 +214,216 @@ erDiagram
 - Authorization
 - Error Handling
 
----
+Generate API reference tables.
 
-# SECTION 9 - BUSINESS LOGIC ANALYSIS
+====================================================================
+SECTION 9 - BUSINESS LOGIC ANALYSIS
+====================================================================
 
-## Business Rules
+Identify:
 
-## Validation Rules
+- Business rules
+- Validation rules
+- Decision points
+- Workflow logic
+- Manufacturing logic
+- Processing rules
 
-## Decision Points
+Provide code references.
 
-## Manufacturing Logic
+====================================================================
+SECTION 10 - SECURITY REVIEW
+====================================================================
 
-## Processing Rules
+Analyze:
 
-## Source Code References
+- Authentication
+- Authorization
+- JWT usage
+- Azure AD
+- Identity
+- Secrets management
+- Encryption
+- Data protection
 
----
+Identify vulnerabilities:
 
-# LT Creation End-to-End Workflow Analysis
+- SQL Injection
+- XSS
+- CSRF
+- Broken Authentication
+- Sensitive Data Exposure
+- Privilege Escalation
 
-## Workflow Scope
+Rate severity:
 
-Analyze the exact execution path:
+- Critical
+- High
+- Medium
+- Low
 
-```text
-CreateLTController
-    -> CreateLTService
-        -> CreateLTContextBuilder
-            -> CreateLTInternalService
-```
+Provide remediation recommendations.
 
-## Request Flow
+====================================================================
+SECTION 11 - INTEGRATION ANALYSIS
+====================================================================
 
-### Step 1 - Controller Entry
+Document:
 
-### Step 2 - CreateLTService Execution
+- External APIs
+- Databases
+- Message Queues
+- File Processing
+- Third-Party Systems
 
-### Step 3 - Site Configuration Resolution
+For each integration:
 
-### Step 4 - DB Context Creation
+- Purpose
+- Protocol
+- Authentication
+- Failure handling
 
-### Step 5 - CreateLTContextBuilder Execution
+====================================================================
+SECTION 12 - LOGGING AND ERROR HANDLING
+====================================================================
 
-#### Request Validation
+Analyze:
 
-#### Site Resolution Workflow
+- Logging framework
+- Log levels
+- Error handling
+- Global exception middleware
+- Retry mechanisms
+- Resilience patterns
 
-#### Order Validation Workflow
+====================================================================
+SECTION 13 - SEQUENCE DIAGRAMS
+====================================================================
 
-#### Machine Validation Workflow
+Generate Mermaid sequence diagrams for:
 
-#### Person Validation Workflow
+1. User authentication flow
+2. Main business transaction flow
+3. Database transaction flow
+4. External API interaction flow
 
-#### Print Master Retrieval Workflow
+====================================================================
+SECTION 14 - DATA FLOW DIAGRAMS
+====================================================================
 
-#### Quantity Resolution Workflow
+Generate Mermaid diagrams for:
 
-### Step 6 - CreateLTInternalService Execution
+- Request flow
+- Processing flow
+- Response flow
 
-#### LT Generation Lifecycle
+====================================================================
+SECTION 15 - DEPLOYMENT ARCHITECTURE
+====================================================================
 
-#### Batch Management Lifecycle
+Analyze:
 
-#### Box Allocation Lifecycle
-
-#### Label Printing Workflow
-
-#### Manufacturing Traceability Data Population
-
-### Database Transaction Boundaries
-
-### Concurrency Control Mechanisms
-
-### Error Handling Flow
-
-### Success Response Flow
-
-## Sequence Diagram
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant CreateLTController
-    participant CreateLTService
-    participant CreateLTContextBuilder
-    participant CreateLTInternalService
-```
-
-## Confirmed Findings
-
-## Risks
-
-## Unknowns
-
----
-
-# SECTION 10 - SECURITY REVIEW
-
-## Authentication Analysis
-
-## Authorization Analysis
-
-## JWT Usage
-
-## Azure AD / Identity Integration
-
-## Secrets Management
-
-## Data Protection
-
-## Vulnerability Assessment
-
-### SQL Injection
-
-### Cross Site Scripting (XSS)
-
-### CSRF
-
-### Broken Authentication
-
-### Sensitive Data Exposure
-
-### Privilege Escalation
-
-## Risk Register
-
-| Finding | Severity | Evidence | Recommendation |
-|----------|----------|----------|----------|
-
----
-
-# SECTION 11 - INTEGRATION ANALYSIS
-
-## External Systems
-
-| Integration | Purpose | Protocol | Authentication | Failure Handling |
-|-------------|----------|----------|----------------|------------------|
-
----
-
-# SECTION 12 - LOGGING AND ERROR HANDLING
-
-## Logging Framework
-
-## Log Levels
-
-## Exception Handling Strategy
-
-## Global Exception Middleware
-
-## Retry Mechanisms
-
-## Resilience Patterns
-
----
-
-# SECTION 13 - SEQUENCE DIAGRAMS
-
-## 1. User Authentication Flow
-
-```mermaid
-sequenceDiagram
-```
-
-## 2. Main Business Transaction Flow
-
-```mermaid
-sequenceDiagram
-```
-
-## 3. Database Transaction Flow
-
-```mermaid
-sequenceDiagram
-```
-
-## 4. External API Interaction Flow
-
-```mermaid
-sequenceDiagram
-```
-
----
-
-# SECTION 14 - DATA FLOW DIAGRAMS
-
-## Request Flow
-
-```mermaid
-flowchart TD
-```
-
-## Processing Flow
-
-```mermaid
-flowchart TD
-```
-
-## Response Flow
-
-```mermaid
-flowchart TD
-```
-
----
-
-# SECTION 15 - DEPLOYMENT ARCHITECTURE
-
-## Hosting Model
-
+- Hosting model
 - IIS
 - Docker
 - Kubernetes
 - Azure
 - AWS
 
-## Deployment Diagram
+Generate deployment diagram.
 
-```mermaid
-flowchart TD
-```
+Document:
 
-## Environment Analysis
+- Development
+- Test
+- UAT
+- Production
 
-### Development
+====================================================================
+SECTION 16 - PERFORMANCE ANALYSIS
+====================================================================
 
-### Test
+Identify:
 
-### UAT
+- Hot paths
+- Database bottlenecks
+- Memory concerns
+- N+1 query risks
+- Lock contention
+- Concurrency issues
+- Caching opportunities
 
-### Production
+Provide optimization recommendations.
 
----
+====================================================================
+SECTION 17 - TECHNICAL DEBT ASSESSMENT
+====================================================================
 
-# SECTION 16 - PERFORMANCE ANALYSIS
+Identify:
 
-## Hot Paths
+- Code smells
+- High complexity methods
+- Tight coupling
+- Duplication
+- SOLID violations
+- Maintainability risks
 
-## Database Bottlenecks
+Create a Technical Debt Register.
 
-## Memory Concerns
+====================================================================
+SECTION 18 - PRODUCTION READINESS REVIEW
+====================================================================
 
-## N+1 Query Risks
+Assess:
 
-## Lock Contention
+- Reliability
+- Scalability
+- Security
+- Maintainability
+- Observability
+- Monitoring
+- Alerting
+- Disaster Recovery
 
-## Concurrency Issues
+Assign scores out of 10.
 
-## Caching Opportunities
+====================================================================
+SECTION 19 - RECOMMENDATIONS
+====================================================================
 
-## Optimization Recommendations
+Provide:
 
----
+Immediate Actions (0-30 days)
 
-# SECTION 17 - TECHNICAL DEBT ASSESSMENT
+Short-Term Improvements (1-3 months)
 
-## Code Smells
+Medium-Term Improvements (3-6 months)
 
-## High Complexity Methods
+Long-Term Modernization Roadmap
 
-## Tight Coupling
+====================================================================
+OUTPUT FORMAT
+====================================================================
 
-## Duplication
+Generate the final document as:
 
-## SOLID Violations
+1. Executive Summary
+2. High Level Design (HLD)
+3. Low Level Design (LLD)
+4. Database Design
+5. API Specification
+6. Security Review
+7. Integration Analysis
+8. Deployment Guide
+9. Technical Debt Assessment
+10. Production Readiness Assessment
+11. Recommendations
 
-## Maintainability Risks
-
-## Technical Debt Register
-
-| ID | Finding | Impact | Priority | Recommendation |
-|----|----------|----------|----------|---------------|
-
----
-
-# SECTION 18 - PRODUCTION READINESS REVIEW
-
-| Area | Score (/10) | Evidence | Notes |
-|--------|--------|--------|--------|
-| Reliability | | | |
-| Scalability | | | |
-| Security | | | |
-| Maintainability | | | |
-| Observability | | | |
-| Monitoring | | | |
-| Alerting | | | |
-| Disaster Recovery | | | |
-
----
-
-# SECTION 19 - RECOMMENDATIONS
-
-## Immediate Actions (0–30 Days)
-
-## Short-Term Improvements (1–3 Months)
-
-## Medium-Term Improvements (3–6 Months)
-
-## Long-Term Modernization Roadmap
-
----
-
-# APPENDICES
-
-## Confirmed Findings
-
-## Unknowns
-
-## Assumptions Avoided
-
-## Source Code Evidence Index
+Use:
+- Professional architecture terminology
+- Markdown
+- Mermaid diagrams
+- Tables
+- Source code references
+- Risk ratings
+- Evidence-based conclusions
