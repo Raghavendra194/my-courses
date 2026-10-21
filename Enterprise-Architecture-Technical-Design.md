@@ -808,7 +808,7 @@ sequenceDiagram
   participant API as JWT bearer middleware
   Client->>Login: POST /api/auth/login
   Login->>Config: Read key, issuer and audience
-  Login-->>Client: Signed JWT (Name/Admin claims; one-day expiration)
+  Login-->>Client: Signed JWT with Name and Admin claims, expires in one day
   Client->>API: Protected request with bearer token
   API->>API: Validate issuer, audience, lifetime and signing key
   API->>API: Authorize endpoint attributes
