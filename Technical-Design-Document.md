@@ -4,7 +4,7 @@
 
 This document covers the .NET solution declared by `CLPS.Service.sln`: `CLPS.Service`, `CLPS.WebUI`, and `CLPS.Tests`. It describes behavior implemented by source code and project/configuration files. Application settings may contain credentials and signing material; values of that kind are not reproduced here.
 
-## 1. Executive Summary
+## Executive Summary
 
 The solution implements an ASP.NET Core service for manufacturing Label Tracking (LT) operations. Capabilities represented in the service include LT creation and retrieval, batch logon/logoff and resolution, label-data generation, printing, association, and site/order/machine lookups. A separate WebUI project serves static content.
 
@@ -22,7 +22,7 @@ The service is organized as a layered application within one Web project: MVC co
 | [Infrastructure/HydraX/HydraXClient.cs](../Infrastructure/HydraX/HydraXClient.cs) | `HydraXClient` | `PostAsync` | Implements HTTP calls to HydraX. |
 | [Services/SftpService/SftpService.cs](../Services/SftpService/SftpService.cs) | `SftpService` | `UploadFileAsync` | Implements SFTP/FTP file upload selection. |
 
-## 2. Solution Structure
+## Solution Structure
 
 ### Projects
 
@@ -84,7 +84,7 @@ The `Services` directory contains feature areas including `Associate`, `Batch`, 
 | [Program.cs](../Program.cs) | Top-level application | — | Registers feature and infrastructure implementations. |
 | [CLPS.WebUI/Program.cs](../../CLPS.WebUI/Program.cs) | Top-level application | — | Configures default-file and static-file handling. |
 
-## 3. Application Architecture
+## Application Architecture
 
 ### Architectural organization
 
@@ -124,24 +124,24 @@ The `CLPS.Service` pipeline is configured in this order: exception handler, stat
 sequenceDiagram
   participant Client
   participant API as CreateLTController
-  participant Create as CreateLTService
+  participant Svc as CreateLTService
   participant Builder as CreateLTContextBuilder
   participant Services as Site, order, person, print-master
   participant Internal as CreateLTInternalService
   participant DB as DbContextWrapper and SQL Server
   Client->>API: POST /api/clps/CreateLT
-  API->>Create: CreateLTAsync(request)
-  Create->>DB: Resolve site configuration and context
-  Create->>Builder: BuildContextAsync
+  API->>Svc: CreateLTAsync(request)
+  Svc->>DB: Resolve site configuration and context
+  Svc->>Builder: BuildContextAsync
   Builder->>Services: Resolve site and validate LT options
   Builder->>Services: Resolve order and person
   Builder->>Services: Resolve Print Master
-  Builder-->>Create: CreateLTContextResult
-  Create->>Internal: CreateLTAsync(request, context)
+  Builder-->>Svc: CreateLTContextResult
+  Svc->>Internal: CreateLTAsync(request, context)
   Internal->>DB: Resolve box and generate LT ID
   Internal->>DB: Insert LT record in transaction
-  Internal-->>Create: CreateLTInternalResult
-  Create-->>API: CreateLTResponse
+  Internal-->>Svc: CreateLTInternalResult
+  Svc-->>API: CreateLTResponse
   API-->>Client: HTTP response
 ```
 
@@ -155,7 +155,7 @@ sequenceDiagram
 | [Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs](../Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs) | `CreateLTContextBuilder` | `BuildContextAsync` | Orchestrates validation and required lookup services. |
 | [Services/CreateLT/Internal/CreateLTInternalService.cs](../Services/CreateLT/Internal/CreateLTInternalService.cs) | `CreateLTInternalService` | `CreateLTAsync` | Resolves box, ID and insert operations. |
 
-## 4. Configuration
+## Configuration and Dependency Injection
 
 ### Application configuration
 
@@ -172,6 +172,69 @@ Configuration is consumed through `IConfiguration` and typed section binding:
 
 `Program.cs` configures default request culture `en-US` and supports `en-US`, `en-GB`, `fr-FR`, `de-DE`, `de-AT`, `de-CH`, `ja-JP`, `pt-BR`, `ko-KR`, `th-TH`, `vi-VN`, and `zh-CN`. Configuration values that may be secrets are intentionally not copied into this document.
 
+### Dependency injection registrations
+
+The service composition root registers the following interfaces to implementations with scoped lifetime:
+
+| Interface | Implementation |
+|---|---|
+| `ICreateLTContextBuilder` | `CreateLTContextBuilder` |
+| `ISiteConfigurationService` | `SiteConfigurationService` |
+| `IConnectionFactory` | `ConnectionFactory` |
+| `IDbContextFactory` | `DbContextFactory` |
+| `ICreateLTService` | `CreateLTService` |
+| `ICreateLTInternalService` | `CreateLTInternalService` |
+| `IValidator<CreateLTValidationModel>` | `CreateLTValidator` |
+| `ISiteResolverService` | `SiteResolverService` |
+| `IGetOrderDetailsService` | `GetOrderDetailsService` |
+| `IGetPersonDetailsService` | `GetPersonDetailsService` |
+| `IGetLTPrintMasterService` | `GetLTPrintMasterService` |
+| `IGetLatestLTIdService` | `GetLatestLTIdService` |
+| `ILTBatchService` | `LTBatchService` |
+| `ILTBoxService` | `LTBoxService` |
+| `ILTIdService` | `LTIdService` |
+| `ILTInsertService` | `LTInsertService` |
+| `IHydraXConfigResolver` | `HydraXConfigResolver` |
+| `IHydraXClient` | `HydraXClient` |
+| `ILogonOutputBatchService` | `LogonOutputBatchService` |
+| `ILogoffOutputBatchService` | `LogoffOutputBatchService` |
+| `IAssociateService` | `AssociateService` |
+| `IGetLTDataService` | `GetLTDataService` |
+| `IPrinterResolutionService` | `PrinterResolutionService` |
+| `IBTServerService` | `BTServerService` |
+| `IPartClassCodeService` | `PartClassCodeService` |
+| `IZLabel4Service` | `ZLabel4Service` |
+| `ICreateLabelDataService` | `CreateLabelDataService` |
+| `IProductMasterService` | `ProductMasterService` |
+| `ISftpService` | `SftpService` |
+| `IPrintOutputBatchService` | `PrintOutputBatchService` |
+| `IPrintFileService` | `PrintFileService` |
+| `IIniConfigurationService` | `IniConfigurationService` |
+| `IHydraConfigurationService` | `HydraConfigurationService` |
+| `ILTStatusService` | `LTStatusService` |
+| `IReportMaterialCommentService` | `ReportMaterialCommentService` |
+| `ICreatePrintLTService` | `CreatePrintLTService` |
+| `IMachineValidationService` | `MachineValidationService` |
+| `IValidateRunningOrderService` | `ValidateRunningOrderService` |
+| `ITranslationService` | `TranslationService` |
+| `IGetLTListService` | `GetLTListService` |
+| `IGetClassTabsService` | `GetClassTabsService` |
+| `IMipPlantResolverService` | `MipPlantResolverService` |
+
+`ISftpService` is registered twice with the same implementation. The composition root also registers `AddHttpClient`, `IHttpContextAccessor`, localization, and request-localization options.
+
+```mermaid
+flowchart TB
+  Controller[Controllers] --> FeatureServices[Scoped feature services]
+  FeatureServices --> Validator[IValidator and CreateLTValidator]
+  FeatureServices --> DBFactory[IDbContextFactory and ConnectionFactory]
+  FeatureServices --> Hydra[IHydraXClient and HydraXConfigResolver]
+  FeatureServices --> FileTransfer[ISftpService and SftpService]
+  DBFactory --> DBContext[IDbContext and DbContextWrapper]
+  Hydra --> HttpClient[HttpClient factory]
+  DBContext --> SQL[(SQL Server)]
+```
+
 ### Evidence
 
 | File | Class | Method | Evidence |
@@ -183,8 +246,9 @@ Configuration is consumed through `IConfiguration` and typed section binding:
 | [Infrastructure/HydraX/HydraXConfig.cs](../Infrastructure/HydraX/HydraXConfig.cs) | `HydraXConfig` | — | Declares typed HydraX configuration properties. |
 | [Infrastructure/HydraX/HydraXConfigResolver.cs](../Infrastructure/HydraX/HydraXConfigResolver.cs) | `HydraXConfigResolver` | `Resolve` | Binds per-installation HydraX configuration and rejects absent configuration. |
 | [Infrastructure/Database/DbContextFactory.cs](../Infrastructure/Database/DbContextFactory.cs) | `DbContextFactory` | `Create`, `CreateMaster` | Reads schema and master connection configuration. |
+| [Program.cs](../Program.cs) | Top-level application | — | Registers feature, validation, database and integration services with scoped lifetime and adds HTTP client/localization services. |
 
-## 5. API Design
+## API Design
 
 ### Route conventions
 
@@ -228,7 +292,7 @@ Request/response types reside under `Models/Requests` and `Models/Responses`. AP
 | [Models/Requests](../Models/Requests) | Request DTOs | — | Defines action request contracts. |
 | [Models/Responses](../Models/Responses) | Response DTOs | — | Defines operation result contracts. |
 
-## 6. Service Design
+## Service Design
 
 ### Feature service contracts
 
@@ -267,7 +331,7 @@ Request/response types reside under `Models/Requests` and `Models/Responses`. AP
 | [Services/CreateLT/Internal/CreateLTInternalService.cs](../Services/CreateLT/Internal/CreateLTInternalService.cs) | `CreateLTInternalService` | `CreateLTAsync` | Coordinates box, ID generation and persistence. |
 | [Services/PrintOutputBatch/PrintOutputBatchService.cs](../Services/PrintOutputBatch/PrintOutputBatchService.cs) | `PrintOutputBatchService` | `ExecuteAsync` | Coordinates print processing. |
 
-## 7. Data Access Design
+## Data Access Design
 
 ### SQL access model
 
@@ -293,7 +357,7 @@ Feature services contain parameterized Dapper queries and direct ADO.NET operati
 | [Infrastructure/HydraX/HydraXClient.cs](../Infrastructure/HydraX/HydraXClient.cs) | `HydraXClient` | `PostAsync`, `LogoutAsync`, `CommitTransactionAsync` | Implements HydraX HTTP operations. |
 | [Services/SftpService/SftpService.cs](../Services/SftpService/SftpService.cs) | `SftpService` | `UploadFileAsync` | Chooses SFTP/FTP implementation by URI scheme. |
 
-## 8. Database Design
+## Database Design
 
 ### Models and SQL entities
 
@@ -375,7 +439,7 @@ Relationships displayed are joins/filters found in source SQL; the diagram does 
 | [Models/LabelMatrixDetail/LabelMatrixDetail.cs](../Models/LabelMatrixDetail/LabelMatrixDetail.cs) | `LabelMatrixDetail` | `getLabelMatrixDetailSQL` | Queries detail and joins map/printer tables. |
 | [Services/Site/SiteResolverService.cs](../Services/Site/SiteResolverService.cs) | `SiteResolverService` | `ResolveSiteAsync` | Queries `u_site_infox` by installation ID. |
 
-## 9. Business Rules
+## Business Rules and Processing Flows
 
 ### LT validation and processing rules
 
@@ -409,7 +473,7 @@ Relationships displayed are joins/filters found in source SQL; the diagram does 
 | [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | `GetUIConfig`, `ClearLtCache` | Implements refresh-value fallback/clamp and development-only cache clearing. |
 | [Services/CreatePrintLT/CreatePrintLTService.cs](../Services/CreatePrintLT/CreatePrintLTService.cs) | `CreatePrintLTService` | `ExecuteAsync` | Implements logoff/print/logon order and partial outcomes. |
 
-## 10. Security Design
+## Security Design
 
 ### JWT and authorization
 
@@ -449,7 +513,7 @@ sequenceDiagram
 | [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | `Associate` and annotated actions | Declares endpoint-level `[Authorize]`/`[AllowAnonymous]`. |
 | [appsettings.json](../appsettings.json) | Configuration | — | Defines JWT configuration section names; values intentionally omitted. |
 
-## 11. Error Handling and Logging
+## Error Handling and Logging
 
 ### Error handling
 
@@ -486,7 +550,7 @@ flowchart TD
 | [Services/Site/SiteResolverService.cs](../Services/Site/SiteResolverService.cs) | `SiteResolverService` | `ResolveSiteAsync` | Logs error and rethrows resolution exceptions. |
 | [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | Actions | Maps selected result failures to HTTP 400/404. |
 
-## 12. Testing
+## Testing
 
 The solution test project targets `net8.0`, references `CLPS.Service`, and declares xUnit, Moq, Microsoft.NET.Test.Sdk and coverlet collector. `LTBoxServiceTests` contains three active `[Fact]` tests:
 
