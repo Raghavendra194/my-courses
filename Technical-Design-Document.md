@@ -1,572 +1,434 @@
-# CLPS .NET Web Service — Technical Design Document
+# Executive Summary
 
-## Document scope
+This solution is implemented as a classic ASP.NET Web Service (ASMX) application on the .NET Framework, not ASP.NET Core. The authoritative evidence is the project file target framework (`TargetFrameworkVersion v4.5.2`) and the use of `System.Web.Services.WebService` across the service classes. The implementation centers on a set of ASMX endpoints that expose data access and operational workflows for manufacturing, quality, event, operator, and machine monitoring.
 
-This document covers the .NET solution declared by `CLPS.Service.sln`: `CLPS.Service`, `CLPS.WebUI`, and `CLPS.Tests`. It describes behavior implemented by source code and project/configuration files. Application settings may contain credentials and signing material; values of that kind are not reproduced here.
+The solution is organized around:
+- public web service classes in the project root (for example, `HDVE`, `HYQS`, `MPAC`, `RINSYS`, `SSRR`, `SSRN`, `PAWS`, `DAWN`)
+- database access layers under the `DAL` folder
+- SQL builders under the `DAL` folder, typically named `*_SQL.cs`
+- shared infrastructure classes under `Classes` for connection management, logging, parameter handling, and conversion utilities
+- a Windows Forms client project (`HDVEClient`) used as a manual test harness
 
-## Executive Summary
+The primary runtime pattern is:
+- a service class receives a request
+- a corresponding `*_DAL` class performs Oracle queries
+- connection metadata is resolved from the central `U_SITE_INFO` table or the service's configured connection profile
+- results are returned as XML, JSON payloads, or strongly typed DTO-like objects
 
-The solution implements an ASP.NET Core service for manufacturing Label Tracking (LT) operations. Capabilities represented in the service include LT creation and retrieval, batch logon/logoff and resolution, label-data generation, printing, association, and site/order/machine lookups. A separate WebUI project serves static content.
-
-The service is organized as a layered application within one Web project: MVC controllers call injected feature services; feature services coordinate validation, SQL access and external integrations. SQL Server access uses Dapper and `Microsoft.Data.SqlClient` through `IDbContext`/`DbContextWrapper`. HydraX is accessed through `HttpClient`; print-file transfer supports SFTP and FTP schemes in `SftpService`.
-
-### Evidence
-
-| File | Class | Method | Evidence |
-|---|---|---|---|
-| [CLPS.Service.sln](../CLPS.Service.sln) | Solution | — | Lists `CLPS.Service`, `CLPS.Tests`, and `CLPS.WebUI`. |
-| [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | Actions | Defines LT, batch, label, print, association, site and validation endpoints. |
-| [Services/CreateLT/CreateLTService.cs](../Services/CreateLT/CreateLTService.cs) | `CreateLTService` | `CreateLTAsync` | Resolves site configuration and initiates LT processing. |
-| [Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs](../Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs) | `CreateLTContextBuilder` | `BuildContextAsync` | Resolves site/order/person/print-master data and validates LT inputs. |
-| [Infrastructure/Database/DbContextWrapper.cs](../Infrastructure/Database/DbContextWrapper.cs) | `DbContextWrapper` | `ExecuteAsync` | Provides transaction-scoped SQL callback execution. |
-| [Infrastructure/HydraX/HydraXClient.cs](../Infrastructure/HydraX/HydraXClient.cs) | `HydraXClient` | `PostAsync` | Implements HTTP calls to HydraX. |
-| [Services/SftpService/SftpService.cs](../Services/SftpService/SftpService.cs) | `SftpService` | `UploadFileAsync` | Implements SFTP/FTP file upload selection. |
-
-## Solution Structure
-
-### Projects
-
-| Project | Project type and target | Responsibility | Project references |
-|---|---|---|---|
-| `CLPS.Service` | `Microsoft.NET.Sdk.Web`, `net8.0` | HTTP API, feature services, validation, SQL and integrations. | No project reference declared. |
-| `CLPS.WebUI` | `Microsoft.NET.Sdk.Web`, `net8.0`; `win-x64` runtime identifier | Static web application host. | No project reference declared. |
-| `CLPS.Tests` | `Microsoft.NET.Sdk`, `net8.0`, test project | Unit tests and test helpers. | References `CLPS.Service`. |
-
-### Project hierarchy
-
-```text
-CLPS.Service.sln
-├── CLPS.Service/
-│   ├── Controllers/                 AuthController, CreateLTController
-│   ├── Infrastructure/
-│   │   ├── Database/                SQL factories, interfaces, wrapper
-│   │   ├── HydraX/                  HydraX client and configuration
-│   │   └── Transactions/            TransactionContext
-│   ├── Models/
-│   │   ├── Context/                 site and workflow context
-│   │   ├── Entities/                LT, label, printer and batch models
-│   │   ├── Internal/                internal workflow result types
-│   │   ├── LabelMatrix/             label-matrix query and selection
-│   │   ├── LabelMatrixDetail/       label-matrix detail query
-│   │   ├── Requests/                request DTOs
-│   │   └── Responses/               response DTOs
-│   ├── Serialization/               JSON helpers/context
-│   ├── Services/                    feature interfaces and implementations
-│   ├── Validators/                  LT validation contracts/implementation
-│   ├── Resources/                   localized JSON text
-│   ├── Properties/                  resources and publish/launch settings
-│   ├── docs/
-│   ├── wwwroot/pages/
-│   ├── Program.cs
-│   └── CLPS.Service.csproj
-├── CLPS.WebUI/
-│   ├── Program.cs
-│   └── wwwroot/                     HTML, JavaScript, CSS, locales and libraries
-└── CLPS.Tests/
-    ├── LTBoxServiceTests.cs
-    ├── CreateLTServiceTests.cs
-    ├── CreateLTValidatorTests.cs
-    ├── LTIdServiceTests.cs
-    ├── LogonOutputBatchServiceTests.cs
-    └── PrintOutputBatchServiceTests.cs
-```
-
-The `Services` directory contains feature areas including `Associate`, `Batch`, `Box`, `ClassTabs`, `Configuration`, `CreateLT`, `CreateLabelData`, `CreatePrintLT`, `LatestLT`, `LicenseTagStatus`, `Localization`, `LogoffOutputBatch`, `LogonOutputBatch`, `LT`, `LTData`, `LTInsert`, `LTPrintMaster`, `Machine`, `MaterialComment`, `Order`, `PartClass`, `Person`, `PrintOutputBatch`, `ProductMaster`, `SftpService`, `Site`, and `ZLabel4Service`.
-
-### Evidence
+The solution is tightly coupled to Oracle database access and uses `System.Data.OracleClient` throughout. It also uses Active Directory LDAP validation for MPAC user authentication, and it exposes configuration values from `Web.config` and application settings.
 
 | File | Class | Method | Evidence |
 |---|---|---|---|
-| [CLPS.Service.sln](../CLPS.Service.sln) | Solution | — | Declares the three projects and their relative paths. |
-| [CLPS.Service.csproj](../CLPS.Service.csproj) | Project | — | Declares Web SDK and `net8.0`. |
-| [CLPS.WebUI/CLPS.WebUI.csproj](../../CLPS.WebUI/CLPS.WebUI.csproj) | Project | — | Declares Web SDK, `net8.0`, and `win-x64`. |
-| [CLPS.Tests/CLPS.Tests.csproj](../../CLPS.Tests/CLPS.Tests.csproj) | Project | — | Declares test project and reference to `CLPS.Service`. |
-| [Program.cs](../Program.cs) | Top-level application | — | Registers feature and infrastructure implementations. |
-| [CLPS.WebUI/Program.cs](../../CLPS.WebUI/Program.cs) | Top-level application | — | Configures default-file and static-file handling. |
+| [mesTE.Web.DAWN/mesTE.Web.DAWN.csproj](mesTE.Web.DAWN/mesTE.Web.DAWN.csproj) | N/A | N/A | Project targets .NET Framework 4.5.2 and includes `System.Web.Services` and `System.Web` references, confirming an ASMX/ASP.NET classic web service implementation. |
+| [mesTE.Web.DAWN/DAWN.asmx.cs](mesTE.Web.DAWN/DAWN.asmx.cs) | `DAWN` | `Select`, `DedicatedSelect`, `SelectWithParameters`, `DedicatedSelectWithParameters` | These are public `[WebMethod]` methods on a `System.Web.Services.WebService` class, confirming the exposure model. |
+| [mesTE.Web.DAWN/DAL/DAL.cs](mesTE.Web.DAWN/DAL/DAL.cs) | `DAL` | `GetConnectionInformation` | Service-specific database access is resolved by querying the central metadata table and constructing an Oracle connection string. |
 
-## Application Architecture
+# Solution Structure
 
-### Architectural organization
+The solution contains two projects:
+- `mesTE.Web.DAWN` — the web service application
+- `HDVEClient` — a Windows Forms client used to exercise the HDVE service
 
-The service uses a layered organization inside `CLPS.Service`:
+The web service project contains:
+- root-level ASMX service classes (`*.asmx.cs`)
+- a `DAL` folder with data access classes
+- a `Classes` folder with shared models, connection management, logging, and utility classes
+- `Global.asax.cs` for ASP.NET application lifecycle events
+- `Web.config` and `Properties/Settings.Designer.cs` for configuration
 
-- **Presentation:** MVC controllers bind requests and map outcomes to HTTP responses.
-- **Application/services:** feature services coordinate operations and business processing.
-- **Validation:** `CreateLTValidator` checks and normalizes LT request values.
-- **Infrastructure:** SQL connection/transaction wrappers, HydraX HTTP client, and SFTP/FTP transfer service.
-- **Contracts and workflow data:** request/response DTOs, entities and contexts under `Models`.
+The service implementations are domain-oriented and correspond closely to manufacturing and production data domains:
+- `HDVE` — machine and order data, license tag data, maintenance data
+- `HYQS` — quality inspection and SPC data
+- `MPAC` — user rights, personnel, work order actions, BAPI integration
+- `RINSYS` — DQIP / cavity / scale / lock / andon integration
+- `SSRN` / `SSRR` — event handling and receiving group management
+- `PAWS` — OEE data
+- `HAWS` — HPSV machine and order data
+- `Andon` — event retrieval and response integration
+- `dQCPC` — quality control event feed
 
-The solution does not split the service, domain and infrastructure into separate application projects. No CQRS dispatcher or event-bus registration appears in the service composition root.
-
-### Request and data flow
+The actual runtime structure follows a layered pattern:
 
 ```mermaid
 flowchart LR
-  Client[HTTP client] --> Middleware[ASP.NET Core pipeline]
-  Middleware --> Controller[Controller]
-  Controller --> Feature[Feature service]
-  Feature --> Validation[Validator or context builder]
-  Feature --> Database[Database wrapper]
-  Feature --> Hydra[HydraX HTTP client]
-  Feature --> Transfer[SFTP or FTP service]
-  Database --> SQL[(SQL Server)]
-  Hydra --> HydraX[HydraX endpoint]
-  Transfer --> FileHost[File-transfer endpoint]
-  Feature --> Controller
-  Controller --> Client
+    C[Client / External Consumer] --> S[ASMX Service Classes]
+    S --> DAL[DAL Classes]
+    DAL --> SQL[SQL Builder Classes]
+    DAL --> CF[ConnectionFactory / ConnectionFactoryEntry]
+    CF --> U[U_SITE_INFO / SiteInfoEntry]
+    CF --> O[(Oracle Database)]
+    MPAC --> AD[Active Directory / LDAP]
+    RINSYS --> EXT[Scale / ELock HTTP endpoints]
+    WebSvc[WebServiceLogging] --> O
 ```
 
-The `CLPS.Service` pipeline is configured in this order: exception handler, static files, HTTPS redirection, CORS, authentication, authorization, controller mapping, request localization, and `Run`.
-
-### LT creation workflow
-
-```mermaid
-sequenceDiagram
-  participant Client
-  participant API as CreateLTController
-  participant Svc as CreateLTService
-  participant Builder as CreateLTContextBuilder
-  participant Services as Site, order, person, print-master
-  participant Internal as CreateLTInternalService
-  participant DB as DbContextWrapper and SQL Server
-  Client->>API: POST /api/clps/CreateLT
-  API->>Svc: CreateLTAsync(request)
-  Svc->>DB: Resolve site configuration and context
-  Svc->>Builder: BuildContextAsync
-  Builder->>Services: Resolve site and validate LT options
-  Builder->>Services: Resolve order and person
-  Builder->>Services: Resolve Print Master
-  Builder-->>Svc: CreateLTContextResult
-  Svc->>Internal: CreateLTAsync(request, context)
-  Internal->>DB: Resolve box and generate LT ID
-  Internal->>DB: Insert LT record in transaction
-  Internal-->>Svc: CreateLTInternalResult
-  Svc-->>API: CreateLTResponse
-  API-->>Client: HTTP response
-```
-
-### Evidence
-
 | File | Class | Method | Evidence |
 |---|---|---|---|
-| [Program.cs](../Program.cs) | Top-level application | — | Configures the service pipeline and DI. |
-| [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | `CreateLT` | Calls `ICreateLTService.CreateLTAsync`. |
-| [Services/CreateLT/CreateLTService.cs](../Services/CreateLT/CreateLTService.cs) | `CreateLTService` | `CreateLTAsync`, `CreateLTInternalAsync` | Resolves site settings and coordinates builder/internal service. |
-| [Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs](../Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs) | `CreateLTContextBuilder` | `BuildContextAsync` | Orchestrates validation and required lookup services. |
-| [Services/CreateLT/Internal/CreateLTInternalService.cs](../Services/CreateLT/Internal/CreateLTInternalService.cs) | `CreateLTInternalService` | `CreateLTAsync` | Resolves box, ID and insert operations. |
+| [mesTE.Web.DAWN/Global.asax.cs](mesTE.Web.DAWN/Global.asax.cs) | `Global` | `Application_Start`, `Session_Start`, `Application_BeginRequest`, etc. | ASP.NET application lifecycle hooks are present, but the methods are empty, indicating no custom app-level startup logic. |
+| [mesTE.Web.DAWN/mesTE.Web.DAWN.csproj](mesTE.Web.DAWN/mesTE.Web.DAWN.csproj) | N/A | N/A | The project structure includes the main web service and references for the AWS SDK and Oracle-related libraries. |
+| [HDVEClient/Program.cs](HDVEClient/Program.cs) | `Program` | `Main` | This Windows Forms app is the only explicit test harness in the solution and launches the license-tag test UI. |
 
-## Configuration and Dependency Injection
+# Application Architecture
 
-### Application configuration
+The application is structured as an ASMX web service platform with a shared infrastructure layer. The dominant pattern is one web service class per business domain, each backed by dedicated data-access classes and SQL-generation routines. There is no ASP.NET Core MVC/Web API pipeline, no `Startup.cs`, and no `IServiceCollection` registration pattern in the repository.
 
-Configuration is consumed through `IConfiguration` and typed section binding:
+The main architectural characteristics are:
 
-| Section/key | Usage |
-|---|---|
-| `Jwt` | Signing key, issuer and audience used by token creation and bearer validation. |
-| `Sites:{installationId}` | Database server/catalog, credentials and connection security options used to build site context. |
-| `Sites:{installationId}:HydraX` | HydraX base URL, access ID and credentials bound to `HydraXConfig`. |
-| `ConnectionStrings:CLPSDatabase` | Master database connection read by `DbContextFactory.CreateMaster`. |
-| `Database:Schema` | Optional schema name; `DbContextFactory` falls back to `dbo`. |
-| `Logging` | Logging levels in the JSON settings. |
+- layered service architecture
+  - UI consumer or partner service calls an ASMX method
+  - service calls a `*_DAL` class
+  - `*_DAL` class invokes database SQL built by `*_SQL`
+  - result is serialized to XML/JSON or returned as DTO-like classes
 
-`Program.cs` configures default request culture `en-US` and supports `en-US`, `en-GB`, `fr-FR`, `de-DE`, `de-AT`, `de-CH`, `ja-JP`, `pt-BR`, `ko-KR`, `th-TH`, `vi-VN`, and `zh-CN`. Configuration values that may be secrets are intentionally not copied into this document.
+- multi-site connection model
+  - central config table `U_SITE_INFO` holds site metadata
+  - the `DAL` layer resolves a site using `TE_HYDRA_ALIAS`
+  - `SiteInfoEntry` contains Hydra user/password, host, domain, SID, port, and application server fields
 
-### Dependency injection registrations
+- connection factory / pooling
+  - `ConnectionFactory` owns a pool of `ConnectionFactoryEntry` objects
+  - it supports dedicated tokens, async execution, cleanup timer, retry logic, and result tracking
 
-The service composition root registers the following interfaces to implementations with scoped lifetime:
+- cross-cutting logging
+  - `WebServiceLogging.LogWebServiceUseage` records start/stop actions per web service call, including user host address and request details
 
-| Interface | Implementation |
-|---|---|
-| `ICreateLTContextBuilder` | `CreateLTContextBuilder` |
-| `ISiteConfigurationService` | `SiteConfigurationService` |
-| `IConnectionFactory` | `ConnectionFactory` |
-| `IDbContextFactory` | `DbContextFactory` |
-| `ICreateLTService` | `CreateLTService` |
-| `ICreateLTInternalService` | `CreateLTInternalService` |
-| `IValidator<CreateLTValidationModel>` | `CreateLTValidator` |
-| `ISiteResolverService` | `SiteResolverService` |
-| `IGetOrderDetailsService` | `GetOrderDetailsService` |
-| `IGetPersonDetailsService` | `GetPersonDetailsService` |
-| `IGetLTPrintMasterService` | `GetLTPrintMasterService` |
-| `IGetLatestLTIdService` | `GetLatestLTIdService` |
-| `ILTBatchService` | `LTBatchService` |
-| `ILTBoxService` | `LTBoxService` |
-| `ILTIdService` | `LTIdService` |
-| `ILTInsertService` | `LTInsertService` |
-| `IHydraXConfigResolver` | `HydraXConfigResolver` |
-| `IHydraXClient` | `HydraXClient` |
-| `ILogonOutputBatchService` | `LogonOutputBatchService` |
-| `ILogoffOutputBatchService` | `LogoffOutputBatchService` |
-| `IAssociateService` | `AssociateService` |
-| `IGetLTDataService` | `GetLTDataService` |
-| `IPrinterResolutionService` | `PrinterResolutionService` |
-| `IBTServerService` | `BTServerService` |
-| `IPartClassCodeService` | `PartClassCodeService` |
-| `IZLabel4Service` | `ZLabel4Service` |
-| `ICreateLabelDataService` | `CreateLabelDataService` |
-| `IProductMasterService` | `ProductMasterService` |
-| `ISftpService` | `SftpService` |
-| `IPrintOutputBatchService` | `PrintOutputBatchService` |
-| `IPrintFileService` | `PrintFileService` |
-| `IIniConfigurationService` | `IniConfigurationService` |
-| `IHydraConfigurationService` | `HydraConfigurationService` |
-| `ILTStatusService` | `LTStatusService` |
-| `IReportMaterialCommentService` | `ReportMaterialCommentService` |
-| `ICreatePrintLTService` | `CreatePrintLTService` |
-| `IMachineValidationService` | `MachineValidationService` |
-| `IValidateRunningOrderService` | `ValidateRunningOrderService` |
-| `ITranslationService` | `TranslationService` |
-| `IGetLTListService` | `GetLTListService` |
-| `IGetClassTabsService` | `GetClassTabsService` |
-| `IMipPlantResolverService` | `MipPlantResolverService` |
-
-`ISftpService` is registered twice with the same implementation. The composition root also registers `AddHttpClient`, `IHttpContextAccessor`, localization, and request-localization options.
-
-```mermaid
-flowchart TB
-  Controller[Controllers] --> FeatureServices[Scoped feature services]
-  FeatureServices --> Validator[IValidator and CreateLTValidator]
-  FeatureServices --> DBFactory[IDbContextFactory and ConnectionFactory]
-  FeatureServices --> Hydra[IHydraXClient and HydraXConfigResolver]
-  FeatureServices --> FileTransfer[ISftpService and SftpService]
-  DBFactory --> DBContext[IDbContext and DbContextWrapper]
-  Hydra --> HttpClient[HttpClient factory]
-  DBContext --> SQL[(SQL Server)]
-```
-
-### Evidence
-
-| File | Class | Method | Evidence |
-|---|---|---|---|
-| [appsettings.json](../appsettings.json) | Configuration | — | Declares `Jwt`, `Sites`, logging and allowed-host sections. |
-| [appsettings.Development.json](../appsettings.Development.json) | Configuration | — | Declares development logging levels. |
-| [Program.cs](../Program.cs) | Top-level application | — | Reads JWT settings and configures request-localization cultures. |
-| [Services/Configuration/SiteConfigurationService.cs](../Services/Configuration/SiteConfigurationService.cs) | `SiteConfigurationService` | `GetSiteConfigAsync` | Reads the installation-specific site section and maps it to `SiteContext`. |
-| [Infrastructure/HydraX/HydraXConfig.cs](../Infrastructure/HydraX/HydraXConfig.cs) | `HydraXConfig` | — | Declares typed HydraX configuration properties. |
-| [Infrastructure/HydraX/HydraXConfigResolver.cs](../Infrastructure/HydraX/HydraXConfigResolver.cs) | `HydraXConfigResolver` | `Resolve` | Binds per-installation HydraX configuration and rejects absent configuration. |
-| [Infrastructure/Database/DbContextFactory.cs](../Infrastructure/Database/DbContextFactory.cs) | `DbContextFactory` | `Create`, `CreateMaster` | Reads schema and master connection configuration. |
-| [Program.cs](../Program.cs) | Top-level application | — | Registers feature, validation, database and integration services with scoped lifetime and adds HTTP client/localization services. |
-
-## API Design
-
-### Route conventions
-
-`CreateLTController` has route prefix `/api/clps`; `AuthController` has route template `/api/[controller]`, resolving to `/api/auth`. The endpoint table records authentication attributes as declared on actions. “No action attribute” means neither `[Authorize]` nor `[AllowAnonymous]` appears on that action.
-
-| Endpoint | Verb | Action | Service/operation | Request | Result and implemented status handling | Authentication attribute |
-|---|---|---|---|---|---|---|
-| `/api/auth/login` | POST | `AuthController.login` | Inline JWT creation | None | `{ token }`; HTTP 200 unless an exception occurs. | None |
-| `/api/clps/CreateLT` | POST | `CreateLT` | `ICreateLTService.CreateLTAsync` | `CreateLTRequest` body | Null body → 400; otherwise service result with 200. | `[AllowAnonymous]` |
-| `/api/clps/SiteInfo` | GET | `GetSiteInfo` | Site resolver; optional MIP plant resolver | `installationId`, optional `machine` query | Invalid ID → 400; missing site → 404; otherwise 200 site result. | `[AllowAnonymous]` |
-| `/api/clps/LogonOutputBatch` | POST | `LogonOutputBatch` | `ILogonOutputBatchService.ExecuteAsync` | `LogonOutputBatchRequest` body | Null/failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/OrderDetails` | GET | `GetOrderDetails` | `IGetOrderDetailsService.GetOrderDetailsAsync` | `orderOperation`, optional `machine` query | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/LTPrintMaster` | POST | `GetLTPrintMaster` | `IGetLTPrintMasterService.GetLTPrintMasterAsync` | `GetLTPrintMasterRequest` body | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/LTData` | GET | `GetLTData` | `IGetLTDataService.GetLTDataAsync` | `lt`, `installationId` query | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/LogoffOutputBatch` | POST | `LogoffOutputBatch` | `ILogoffOutputBatchService.ExecuteAsync` | `lt`, `qty`, `installationId` query | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/GetLatestLTID` | POST | `GetLatestLTId` | `IGetLatestLTIdService.GetLatestLTIdAsync` | `GetLatestLTIdRequest` | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/GetLTList` | POST | `GetLTList` | `IGetLTListService.GetLTListAsync` | `GetLTListRequest` body | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/batch` | GET | `GetBatch` | `ILTBatchService.ResolveBatchAsync` | Order, machine, building, method; optional batch/site query | Returns 200 with result/order/machine/batch/message fields. | None |
-| `/api/clps/CreateLabelData` | POST | `CreateLabelData` | `ICreateLabelDataService.CreateLabelDataAsync` | `CreateLabelDataRequest` body | Null/failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/Associate` | POST | `Associate` | `IAssociateService.ExecuteAsync` | `AssociateRequest` | Failed result → 400; otherwise 200. | `[Authorize]` |
-| `/api/clps/PrintOutputBatch` | POST | `PrintOutputBatch` | `IPrintOutputBatchService.ExecuteAsync` | `PrintOutputBatchRequest` body | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/CreatePrintLT` | POST | `CreatePrintLT` | `ICreatePrintLTService.ExecuteAsync` | `CreatePrintLTRequest` body | Null/failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/ValidateMachine` | GET | `ValidateMachine` | `IMachineValidationService.ValidateMachineAsync` | `machine`, `installationId` query | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/ValidateRunningOrder` | GET | `ValidateRunningOrder` | `IValidateRunningOrderService.ValidateRunningOrderAsync` | `machine`, `installationId` query | Failed result → 400; otherwise 200. | `[AllowAnonymous]` |
-| `/api/clps/GetClassTabs` | GET | `GetClassTabs` | `IGetClassTabsService.GetClassTabsAsync` | `machine`, optional `installationID` query | Blank machine/failed result → 400; otherwise 200. | None |
-| `/api/clps/GetUIConfig` | GET | `GetUIConfig` | `IIniConfigurationService.GetValueAsync` | `installationId` query | Returns 200; missing/invalid/error gives result false and value 30; valid values are clamped to at least 10. | None |
-| `/api/clps/culture` | GET | `Culture` | Framework culture values | None | Current culture and UI culture; 200. | None |
-| `/api/clps/public` | GET | `GetPublic` | Reads static welcome page | None | Missing file → 404; otherwise HTML with 200. | `[AllowAnonymous]` |
-| `/api/clps/clear-lt-cache` | POST | `ClearLtCache` | `ILTIdService.ClearCache` | None | Non-Development → 404; Development → clears cache and returns 200. | None |
-
-### DTO coverage
-
-Request/response types reside under `Models/Requests` and `Models/Responses`. API contracts include `CreateLTRequest`/`CreateLTResponse`, `LogonOutputBatchRequest`/`LogonOutputBatchResponse`, `GetLTPrintMasterRequest`/`GetLTPrintMasterResult`, `GetLTDataRequest`/`GetLTDataResult`, `GetLatestLTIdRequest`/`GetLatestLTIdResult`, `GetLTListRequest`/`GetLTListResult`, `AssociateRequest`/`AssociateResponse`, `PrintOutputBatchRequest`/`PrintOutputBatchResponse`, and `CreatePrintLTRequest`/`CreatePrintLTResponse`.
-
-### Evidence
-
-| File | Class | Method | Evidence |
-|---|---|---|---|
-| [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | All action methods | Declares route/action attributes, parameters, service calls and HTTP response mapping. |
-| [Controllers/AuthController.cs](../Controllers/AuthController.cs) | `AuthController` | `login` | Declares `/api/auth/login` and token result. |
-| [Models/Requests](../Models/Requests) | Request DTOs | — | Defines action request contracts. |
-| [Models/Responses](../Models/Responses) | Response DTOs | — | Defines operation result contracts. |
-
-## Service Design
-
-### Feature service contracts
-
-| Interface | Implementation | Responsibility evidenced by implementation |
-|---|---|---|
-| `ICreateLTService` | `CreateLTService` | Resolve site context and orchestrate LT creation. |
-| `ICreateLTContextBuilder` | `CreateLTContextBuilder` | Resolve site/order/person/print-master dependencies and validate LT context. |
-| `ICreateLTInternalService` | `CreateLTInternalService` | Select box, generate LT ID and insert LT. |
-| `IValidator<CreateLTValidationModel>` | `CreateLTValidator` | Normalize/validate LT class, level and WIP stage. |
-| `ISiteResolverService` | `SiteResolverService` | Resolve site fields from the site database. |
-| `IGetOrderDetailsService` | `GetOrderDetailsService` | Retrieve order and machine information. |
-| `IGetPersonDetailsService` | `GetPersonDetailsService` | Validate person information. |
-| `IGetLTPrintMasterService` | `GetLTPrintMasterService` | Resolve label matrix/detail and print-master values. |
-| `ILTBatchService` | `LTBatchService` | Resolve batches using supported batch modes. |
-| `ILTBoxService` | `LTBoxService` | Read and advance box number state. |
-| `ILTIdService` | `LTIdService` | Generate LT identifiers and maintain last-ID cache. |
-| `ILTInsertService` | `LTInsertService` | Validate and insert LT entities. |
-| `ILogonOutputBatchService` | `LogonOutputBatchService` | Create LT and execute HydraX logon/material operations. |
-| `ILogoffOutputBatchService` | `LogoffOutputBatchService` | Process output-batch logoff. |
-| `IAssociateService` | `AssociateService` | Execute machine/LT association workflow. |
-| `IPrintOutputBatchService` | `PrintOutputBatchService` | Validate LT print request, resolve print data, upload and update status. |
-| `ICreatePrintLTService` | `CreatePrintLTService` | Coordinate logoff, print and logon steps. |
-| `ICreateLabelDataService` | `CreateLabelDataService` | Build label data from configured maps and related records. |
-| `ISftpService` | `SftpService` | Transfer files using supported SFTP/FTP schemes. |
-
-`Program.cs` registers feature and infrastructure implementations with scoped lifetime. It also registers `AddHttpClient`, `IHttpContextAccessor`, localization, and request-localization options.
-
-### Evidence
-
-| File | Class | Method | Evidence |
-|---|---|---|---|
-| [Program.cs](../Program.cs) | Top-level application | — | Registers service interfaces and implementations with `AddScoped`. |
-| [Services/CreateLT/CreateLTService.cs](../Services/CreateLT/CreateLTService.cs) | `CreateLTService` | `CreateLTAsync`, `CreateLTInternalAsync` | Orchestrates LT workflow through injected dependencies. |
-| [Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs](../Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs) | `CreateLTContextBuilder` | `BuildContextAsync` | Performs dependency lookups and assembles context. |
-| [Validators/CreateLTValidator.cs](../Validators/CreateLTValidator.cs) | `CreateLTValidator` | `ValidateAsync` | Applies LT class/level/WIP rules. |
-| [Services/CreateLT/Internal/CreateLTInternalService.cs](../Services/CreateLT/Internal/CreateLTInternalService.cs) | `CreateLTInternalService` | `CreateLTAsync` | Coordinates box, ID generation and persistence. |
-| [Services/PrintOutputBatch/PrintOutputBatchService.cs](../Services/PrintOutputBatch/PrintOutputBatchService.cs) | `PrintOutputBatchService` | `ExecuteAsync` | Coordinates print processing. |
-
-## Data Access Design
-
-### SQL access model
-
-The data-access abstraction consists of `IConnectionFactory`, `IDbContextFactory`, `IDbContext` and `DbContextWrapper`. `ConnectionFactory` builds a SQL Server connection string from `SiteContext`. `DbContextFactory.Create` creates a site-specific wrapper; `CreateMaster` reads the master connection string. `DbContextWrapper.ExecuteAsync` opens a `SqlConnection`, begins a `SqlTransaction`, invokes a callback, commits on success, and attempts rollback before rethrowing when the callback fails.
-
-Feature services contain parameterized Dapper queries and direct ADO.NET operations. No separate repository abstraction is identified in analyzed source code. Entity Framework Core usage is not identified in analyzed source code.
-
-### Integrations
-
-- `HydraXClient` sends JSON HTTP requests to a per-installation HydraX endpoint and implements session logout and transaction commit operations.
-- `SftpService.UploadFileAsync` accepts SFTP or FTP URI schemes and routes to the corresponding transfer implementation.
-- Database/provider implementation is Microsoft SQL Server through `Microsoft.Data.SqlClient`.
-
-### Evidence
-
-| File | Class | Method | Evidence |
-|---|---|---|---|
-| [Infrastructure/Database/IConnectionFactory.cs](../Infrastructure/Database/IConnectionFactory.cs) | `IConnectionFactory` | `BuildConnectionString` | Defines connection-string construction contract. |
-| [Infrastructure/Database/ConnectionFactory.cs](../Infrastructure/Database/ConnectionFactory.cs) | `ConnectionFactory` | `BuildConnectionString` | Populates `SqlConnectionStringBuilder` from `SiteContext`. |
-| [Infrastructure/Database/IDbContext.cs](../Infrastructure/Database/IDbContext.cs) | `IDbContext` | `ExecuteAsync` | Defines callback signatures carrying SQL connection and transaction. |
-| [Infrastructure/Database/DbContextWrapper.cs](../Infrastructure/Database/DbContextWrapper.cs) | `DbContextWrapper` | `ExecuteAsync` | Implements SQL connection, transaction, commit and rollback behavior. |
-| [Infrastructure/Database/DbContextFactory.cs](../Infrastructure/Database/DbContextFactory.cs) | `DbContextFactory` | `Create`, `CreateMaster` | Creates wrapper for site or master database configuration. |
-| [Infrastructure/HydraX/HydraXClient.cs](../Infrastructure/HydraX/HydraXClient.cs) | `HydraXClient` | `PostAsync`, `LogoutAsync`, `CommitTransactionAsync` | Implements HydraX HTTP operations. |
-| [Services/SftpService/SftpService.cs](../Services/SftpService/SftpService.cs) | `SftpService` | `UploadFileAsync` | Chooses SFTP/FTP implementation by URI scheme. |
-
-## Database Design
-
-### Models and SQL entities
-
-The source includes plain C# data models and embedded SQL statements. No EF Core context, `DbSet`, EF entity configuration, or EF migrations are identified in analyzed source code. Standalone SQL migration/script files are not identified in the service implementation; sequence creation SQL used by batch processing is embedded in C#.
-
-| Entity/table | Key or identity evidence | Relationships/query behavior | Implementation evidence |
-|---|---|---|---|
-| `LTEntity` / `u_te_lb_lt_info` | Database key: Not identified in analyzed source code. | LT, order, machine, part, class, batch, box, parent-LT and other fields are queried/inserted/updated. | `LTInsertService`, LT lookup/status/association services. |
-| `LTBatchRecord` / `u_te_lb_batch` | Database key: Not identified in analyzed source code. | AUTO batch lookup uses order, machine and building; inserted mapping carries batch and update date. | `LTBatchService`. |
-| `u_site_infox` | Database key: Not identified in analyzed source code. | Filtered by installation ID to resolve site metadata. | `SiteResolverService`. |
-| `u_te_maschinen_parameters` | Database key: Not identified in analyzed source code. | Machine number joins to plant master by plant ID; used for validation and class tabs. | Site/MIP resolver, machine validation and class-tab services. |
-| `u_te_lb_plant_master` | Database key: Not identified in analyzed source code. | Joined from machine parameters; provides plant/building/country data. | Print Master and MIP plant services. |
-| `u_te_lb_label_matrix` | `LabelMatrix.Id` maps queried ID; physical PK: Not identified in analyzed source code. | Selection scores part/tool/machine/group/category matches. | `LabelMatrix.getLabelMatrixSQL`, `ResolveLabelMatrix`. |
-| `u_te_lb_label_matrix_detail` | Physical key: Not identified in analyzed source code. | Filtered by matrix ID, level, label class and WIP stage; joins label map and printer master. | `LabelMatrixDetail.getLabelMatrixDetailSQL`. |
-| `u_te_lb_label_map`, `u_te_lb_label_map_detail` | `LabelMapDb.Id` maps queried ID; physical keys: Not identified in analyzed source code. | Detail query joins map ID and returns field/property/method mapping. | `CreateLabelDataService`, `LabelMatrixDetail`. |
-| `u_te_lb_printer_master` | Physical key: Not identified in analyzed source code. | Joined by printer ID for matrix detail and LT list. | Printer resolution and label configuration queries. |
-| `u_te_lb_part_master`, `u_te_lb_part_zzapq_qty` | Physical keys: Not identified in analyzed source code. | Package quantity query filters by plant, part-master ID and package type. | `GetLTPrintMasterService`. |
-| `u_te_lb_machine_association` | Physical key: Not identified in analyzed source code. | Machine lookup and insert; association service also updates LT parent/sub-status/quantity fields. | `AssociateService`. |
-| `u_te_lb_sftp_bt_master` | Physical key: Not identified in analyzed source code. | BT-server configuration lookup by ID. | `BTServerService`. |
-| `u_te_lb_configuration` | Physical key: Not identified in analyzed source code. | Configuration lookup by INI name, section and key. | `IniConfigurationService`. |
-| `u_te_lb_zlabel4` | Physical key: Not identified in analyzed source code. | Read by configured ZLabel4 classes. | `ZLabel4Service`. |
-| Manufacturing tables (`auftrags_bestand`, `auftrag_status`, `maschinen`, `res_bestand`) | Physical keys: Not identified in analyzed source code. | Used by order/manufacturing queries. | `GetOrderDetailsService`, Print Master and related services. |
-
-Table/column types, physical primary keys, foreign-key constraints, and index definitions are **Not identified in analyzed source code.** The relationships above describe SQL joins and filters present in query text, not a claim about database constraints.
-
-### Logical relationship diagram
-
-```mermaid
-erDiagram
-  u_te_lb_lt_info {
-    string lt
-    string order_no
-    string machine
-    string parent_lt
-  }
-  u_te_lb_batch {
-    string order
-    string machine
-    string building_no
-    string batch
-  }
-  u_te_lb_label_matrix {
-    long id
-  }
-  u_te_lb_label_matrix_detail {
-    long label_matrix_id
-    long label_map_id
-    long printer_id
-  }
-  u_te_lb_label_map {
-    long id
-  }
-  u_te_lb_printer_master {
-    long id
-  }
-  u_te_maschinen_parameters {
-    string masch_nr
-    long lb_plant_id
-  }
-  u_te_lb_plant_master {
-    long id
-  }
-  u_te_lb_label_matrix ||--o{ u_te_lb_label_matrix_detail : queried_by_matrix_id
-  u_te_lb_label_matrix_detail }o--|| u_te_lb_label_map : joined_by_label_map_id
-  u_te_lb_label_matrix_detail }o--|| u_te_lb_printer_master : joined_by_printer_id
-  u_te_maschinen_parameters }o--|| u_te_lb_plant_master : joined_by_plant_id
-```
-
-Relationships displayed are joins/filters found in source SQL; the diagram does not define physical database constraints.
-
-### Evidence
-
-| File | Class | Method | Evidence |
-|---|---|---|---|
-| [Models/Entities/LTEntity.cs](../Models/Entities/LTEntity.cs) | `LTEntity` | — | Defines fields inserted for an LT record. |
-| [Services/LTInsert/LTInsertService.cs](../Services/LTInsert/LTInsertService.cs) | `LTInsertService` | `InsertLTAsync` | Inserts LT fields into `u_te_lb_lt_info`. |
-| [Services/Batch/LTBatchService.cs](../Services/Batch/LTBatchService.cs) | `LTBatchService` | `ResolveBatchAsync` | Queries and inserts AUTO batch mappings and creates SQL sequences. |
-| [Models/LabelMatrix/LabelMatrix.cs](../Models/LabelMatrix/LabelMatrix.cs) | `LabelMatrix` | `getLabelMatrixSQL`, `ResolveLabelMatrix` | Queries and selects label-matrix matches. |
-| [Models/LabelMatrixDetail/LabelMatrixDetail.cs](../Models/LabelMatrixDetail/LabelMatrixDetail.cs) | `LabelMatrixDetail` | `getLabelMatrixDetailSQL` | Queries detail and joins map/printer tables. |
-| [Services/Site/SiteResolverService.cs](../Services/Site/SiteResolverService.cs) | `SiteResolverService` | `ResolveSiteAsync` | Queries `u_site_infox` by installation ID. |
-
-## Business Rules and Processing Flows
-
-### LT validation and processing rules
-
-| Rule | Implementation |
-|---|---|
-| LT class defaults to `3SI`; accepted values are `3SI`, `3S`, and `4S`; inputs are trimmed and uppercased. | `CreateLTValidator.ValidateAsync`. |
-| Level defaults to 1 and must be 1–3; `3SI` permits only level 1; level 2 requires `3S` or `4S`. | `CreateLTValidator.ValidateAsync`. |
-| WIP stage defaults to `FG`; `FG` is the only accepted value. | `CreateLTValidator.ValidateAsync`. |
-| Positive request quantity takes precedence over positive Print Master label quantity. | `CreateLTContextBuilder.ResolveQuantity`. |
-| `CreateLTInternalService.GetPrefix` maps `3S` and `3SI` to prefix `3S`; other values throw. | `CreateLTInternalService.GetPrefix`. |
-| LT insert requires a positive box and nonblank order, class and LT. | `LTInsertService.ValidateEntity`. |
-| Label matrix records are ranked by configured specificity; missing/ambiguous selection throws. | `LabelMatrix.getLabelMatrixSQL`, `ResolveLabelMatrix`. |
-| SAP batch mode trims returned value, rejects over-10-character values and returns `"0"` for blank/zero. AUTO mode reuses matching order/machine/building mapping or allocates a sequence-based batch and inserts a mapping. | `LTBatchService.ResolveBatchAsync`. |
-| UI refresh is 30 when missing/invalid; valid values are clamped to a minimum of 10. | `CreateLTController.GetUIConfig`. |
-| LT cache-clear endpoint returns 404 outside Development. | `CreateLTController.ClearLtCache`. |
-
-### Workflow processing rules
-
-`CreateLTContextBuilder.BuildContextAsync` performs site resolution and LT validation concurrently, then order and person lookup concurrently, followed by Print Master resolution. `CreateLTInternalService.CreateLTAsync` serializes its critical section through a static `SemaphoreSlim`. `CreatePrintLTService.ExecuteAsync` performs logoff, print and logon steps, and constructs response messages for partial outcomes.
-
-### Evidence
-
-| File | Class | Method | Evidence |
-|---|---|---|---|
-| [Validators/CreateLTValidator.cs](../Validators/CreateLTValidator.cs) | `CreateLTValidator` | `ValidateAsync` | Defines class, level and WIP defaults and accepted values. |
-| [Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs](../Services/CreateLT/ContextBuilder/CreateLTContextBuilder.cs) | `CreateLTContextBuilder` | `BuildContextAsync`, `ResolveQuantity` | Implements prerequisite workflow and quantity selection. |
-| [Services/CreateLT/Internal/CreateLTInternalService.cs](../Services/CreateLT/Internal/CreateLTInternalService.cs) | `CreateLTInternalService` | `CreateLTAsync`, `GetPrefix` | Serializes creation and selects LT prefix. |
-| [Services/LTInsert/LTInsertService.cs](../Services/LTInsert/LTInsertService.cs) | `LTInsertService` | `ValidateEntity` | Validates required LT insert values. |
-| [Services/Batch/LTBatchService.cs](../Services/Batch/LTBatchService.cs) | `LTBatchService` | `ResolveBatchAsync` | Implements SAP and AUTO batch handling. |
-| [Models/LabelMatrix/LabelMatrix.cs](../Models/LabelMatrix/LabelMatrix.cs) | `LabelMatrix` | `ResolveLabelMatrix` | Implements matching specificity and ambiguous-result handling. |
-| [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | `GetUIConfig`, `ClearLtCache` | Implements refresh-value fallback/clamp and development-only cache clearing. |
-| [Services/CreatePrintLT/CreatePrintLTService.cs](../Services/CreatePrintLT/CreatePrintLTService.cs) | `CreatePrintLTService` | `ExecuteAsync` | Implements logoff/print/logon order and partial outcomes. |
-
-## Security Design
-
-### JWT and authorization
-
-`Program.cs` configures JWT bearer authentication as the default authenticate and challenge scheme. Issuer, audience, lifetime and signing-key validation are enabled. `AuthController.login` creates a JWT with fixed Name and Admin role claims and a one-day expiration. Its source comment describes user validation as dummy validation.
-
-`UseAuthentication` precedes `UseAuthorization`. `CreateLTController.Associate` has `[Authorize]`. Several actions have `[AllowAnonymous]`; actions without either attribute have no action-level authorization declaration. No named authorization policy registration is present in `Program.cs`.
-
-| Endpoint group | Declared protection |
-|---|---|
-| `/api/clps/Associate` | `[Authorize]`. |
-| CreateLT, SiteInfo, LogonOutputBatch, OrderDetails, LTPrintMaster, LTData, LogoffOutputBatch, GetLatestLTID, GetLTList, CreateLabelData, PrintOutputBatch, CreatePrintLT, ValidateMachine, ValidateRunningOrder, public | `[AllowAnonymous]`. |
-| batch, GetClassTabs, GetUIConfig, culture, clear-lt-cache | No action-level authorization attribute. |
-| `/api/auth/login` | No action-level authorization attribute. |
-
-### Authentication sequence
-
-```mermaid
-sequenceDiagram
-  participant Client
-  participant Login as AuthController.login
-  participant Config as Jwt configuration
-  participant Middleware as JWT bearer middleware
-  Client->>Login: POST /api/auth/login
-  Login->>Config: Read signing key, issuer and audience
-  Login-->>Client: Signed JWT
-  Client->>Middleware: Request with bearer token
-  Middleware->>Middleware: Validate issuer, audience, lifetime and signing key
-  Middleware->>Middleware: Apply endpoint authorization attributes
-```
-
-### Evidence
-
-| File | Class | Method | Evidence |
-|---|---|---|---|
-| [Program.cs](../Program.cs) | Top-level application | — | Configures JWT bearer validation and authentication/authorization middleware. |
-| [Controllers/AuthController.cs](../Controllers/AuthController.cs) | `AuthController` | `login` | Creates token with fixed Name/Admin claims and configured signing material. |
-| [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | `Associate` and annotated actions | Declares endpoint-level `[Authorize]`/`[AllowAnonymous]`. |
-| [appsettings.json](../appsettings.json) | Configuration | — | Defines JWT configuration section names; values intentionally omitted. |
-
-## Error Handling and Logging
-
-### Error handling
-
-The service registers an inline ASP.NET Core exception handler that writes JSON fields `result`, `message`, and `detail`; `detail` contains the exception stack trace. Controller actions also map service result failures to HTTP 400 in operation-specific cases. `DbContextWrapper` attempts rollback after callback failure and rethrows. `HydraXClient.PostAsync` throws `HttpRequestException` when HydraX returns a non-success status. Several services log exceptions before rethrowing or converting them to result DTOs.
-
-### Logging
-
-Serilog is configured with minimum level `Debug`, with `Microsoft` and `System` category overrides at `Information`. Console and daily rolling file sinks are configured. The source uses `Debug`, `Information`, `Warning`, and `Error` log calls.
-
-### Error flow
+- external integrations
+  - Active Directory via `DirectoryEntry` in `MPAC.IsValidUserPwd`
+  - HTTP endpoints for scale and E-Lock via `ScaleAddress` and `ELockAddress`
+  - BAPI integration in `MPACBAPI`
 
 ```mermaid
 flowchart TD
-  Request[Request] --> Handler[ASP.NET Core exception handler]
-  Handler --> Controller[Controller action]
-  Controller --> Service[Feature service]
-  Service -->|success| Response[HTTP response]
-  Service -->|failure result| Mapping[Action-specific status mapping]
-  Service -->|exception| Catch[Service catch or rethrow]
-  Catch --> Handler
-  Handler --> Json[JSON result, message and detail]
-  Db[Database callback] -->|exception| Rollback[Attempt rollback]
-  Rollback --> Propagate[Propagate exception]
-  Propagate --> Handler
+    A[Web Client / Partner System] --> B[ASMX Service Class]
+    B --> C[DAL Class]
+    C --> D[SQL Builder]
+    C --> E[SiteInfoEntry / U_SITE_INFO]
+    E --> F[Oracle Connection]
+    F --> G[(Hydra / Site Database)]
+    B --> H[WebServiceLogging]
+    B --> I[Non-DB integrations]
+    I --> J[LDAP / Active Directory]
+    I --> K[HTTP Scale and Lock services]
 ```
 
-### Evidence
+| File | Class | Method | Evidence |
+|---|---|---|---|
+| [mesTE.Web.DAWN/Classes/ConnectionFactory.cs](mesTE.Web.DAWN/Classes/ConnectionFactory.cs) | `ConnectionFactory` | `Initialize`, `Cleanup`, `AddConnection`, `GetUsableConnectionIndex` | The connection factory manages reusable Oracle connections, retry handling, and cleanup of idle connections. |
+| [mesTE.Web.DAWN/Classes/ConnectionFactoryEntry.cs](mesTE.Web.DAWN/Classes/ConnectionFactoryEntry.cs) | `ConnectionFactoryEntry` | `CreateConnection`, `Select`, `Dispose` | A connection entry encapsulates the Oracle connection, transaction state, timestamps, last command metrics, and disposal lifecycle. |
+| [mesTE.Web.DAWN/Classes/WebServiceLogging.cs](mesTE.Web.DAWN/Classes/WebServiceLogging.cs) | `WebServiceLogging` | `ConfigureConnection`, `LogWebServiceUseage` | Request logging is implemented as a reusable infrastructure service with Oracle-backed persistence. |
+
+# Configuration and Dependency Injection
+
+The solution does not use an ASP.NET Core dependency injection container. There are no `Startup` classes or service registrations. Instead, object creation is direct and static:
+- `Global` lifecycle methods are empty
+- `ConnectionFactory` is instantiated directly in `DAWN`
+- `DAL` is static
+- `WebServiceLogging` is static
+- settings are read from `Web.config` and generated settings classes
+
+Configuration is split between:
+- `Web.config` application settings and IIS settings
+- `Properties.Settings.Default` application settings generated from the config
+- XML-based external connection metadata file loaded in `BASE_DAL.InitializeConnection` and `DAL.CreateSiteInfoConnection`
+
+Important configuration entries implemented in source:
+- `ELockAddress`
+- `ScaleAddress`
+- `WeightDecimal`
+- `DqipPictureFolder`
+- database connection defaults: `Database`, `Server`, `Port`, `SID`, `Domain`, `MPACMinimumRights`
+
+Evidence:
 
 | File | Class | Method | Evidence |
 |---|---|---|---|
-| [Program.cs](../Program.cs) | Top-level application | — | Configures exception JSON handler, Serilog levels/sinks and host logger. |
-| [Infrastructure/Database/DbContextWrapper.cs](../Infrastructure/Database/DbContextWrapper.cs) | `DbContextWrapper` | `ExecuteAsync` | Commits on success; attempts rollback and rethrows on callback failure. |
-| [Infrastructure/HydraX/HydraXClient.cs](../Infrastructure/HydraX/HydraXClient.cs) | `HydraXClient` | `PostAsync` | Throws `HttpRequestException` for non-success response. |
-| [Services/Site/SiteResolverService.cs](../Services/Site/SiteResolverService.cs) | `SiteResolverService` | `ResolveSiteAsync` | Logs error and rethrows resolution exceptions. |
-| [Controllers/CreateLTController.cs](../Controllers/CreateLTController.cs) | `CreateLTController` | Actions | Maps selected result failures to HTTP 400/404. |
+| [mesTE.Web.DAWN/Web.config](mesTE.Web.DAWN/Web.config) | N/A | N/A | IIS module config, request size limits, Windows authentication, HTTP GET protocol support, and endpoint app settings are defined here. |
+| [mesTE.Web.DAWN/Properties/Settings.Designer.cs](mesTE.Web.DAWN/Properties/Settings.Designer.cs) | `Settings` | `Database`, `Server`, `Port`, `SID`, `Domain`, `MPACMinimumRights` | Default site/database settings are generated and used by service business logic. |
+| [mesTE.Web.DAWN/MPAC.asmx.cs](mesTE.Web.DAWN/MPAC.asmx.cs) | `MPAC` | `GetUserData` | Rights validation is enforced by comparing `GetRightsByUser(user)` to `Properties.Settings.Default.MPACMinimumRights`. |
+| [mesTE.Web.DAWN/DAL/DAL.cs](mesTE.Web.DAWN/DAL/DAL.cs) | `DAL` | `CreateSiteInfoConnection` | The connection metadata is loaded from `central.db.config.xml` under `Program Files\mesTE\common`. |
 
-## Testing
+Notable design conclusion:
+- there is no ASP.NET Core dependency injection system in this codebase
+- configuration is environment-based and static
+- site and database connectivity is resolved at runtime with XML and metadata tables
 
-The solution test project targets `net8.0`, references `CLPS.Service`, and declares xUnit, Moq, Microsoft.NET.Test.Sdk and coverlet collector. `LTBoxServiceTests` contains three active `[Fact]` tests:
+# API Design
 
-1. `IncrementBoxAsync_ShouldIncreaseValue` verifies consecutive cache increments.
-2. `ShouldNotIncrement_WhenInsertFails` verifies repeated latest-box reads return the same cached value when no increment is performed.
-3. `Should_Not_Create_Duplicates` runs parallel increments and asserts returned values are distinct.
+The solution exposes a large set of ASMX web methods. These methods are defined as `[WebMethod]` on classes extending `System.Web.Services.WebService`. Method exposure patterns vary:
+- some return primitive strings
+- some return strongly typed objects or lists
+- some produce JSON directly by writing to `Context.Response`
+- some use XML/JSON string payloads rather than typed SOAP objects
 
-`CreateLTServiceTests.cs`, `CreateLTValidatorTests.cs`, `LTIdServiceTests.cs`, `LogonOutputBatchServiceTests.cs`, and `PrintOutputBatchServiceTests.cs` contain commented-out test declarations. A distinct integration-test project or fixture is Not identified in analyzed source code.
+API categories implemented in the source:
 
-### Evidence
+| Service Class | Representative Methods | Return Style | Purpose |
+|---|---|---|---|
+| `DAWN` | `Select`, `SelectWithParameters`, `GetConnectionToken`, `ResumeConnectionToken`, `IsResultReady` | `long`, `void` | Generic asynchronous SQL execution via Oracle connections and tokens |
+| `HDVE` | `HDVEGetData`, `HDVEGetDataJSON`, `HDVCGetLicenseTagData`, `GetLastestLicenseTagData` | `string`, `void`, `LicenseTagResponse` | Machine/order data, maintenance information, license tag validation |
+| `HYQS` | `GetHydraQualityData`, `GetInspectionDataInJson`, `GetInspectionDataSPC`, `GetInitialLoadDataInJson` | `string`, `void` | Quality inspection and SPC data retrieval |
+| `MPAC` | `GetAdeGrundByMachine`, `GetPersonDataByUser`, `GetRightsByUser`, `IsValidUserPwd`, `GetUserData`, `SendBAPI` | `List<T>`, `string`, `bool`, `int` | User validation, authorization, order processing, SAP/BAPI workflow |
+| `RINSYS` | `Scale`, `OpenLock`, `Andon`, `GetDQIPbyPartNumberInJson`, `GetCavityInfoByMachineNrInJson` | `string` | Scale integration, lock integration, DQIP and cavity info |
+| `SSRN` | `GetMachines`, `GetTerminals`, `GetTerminalMachines`, `CreateEvent`, `CancelEvent` | `string`, `List<T>` | Event and receiving-group operations |
+| `SSRR` | `GetUserInformation`, `GetEvents`, `SetEventStatus`, `CreateQCPCEvent`, `SetCostCenter` | `string`, `List<T>` | Event response and cost center updates |
+| `dQCPC` | `GetQCPCEventsByHoursJSON`, `GetQCPCEventsByDate`, `GetQCPCEventsWithParentchildDataByDate` | `string` or `void` | QC event feed retrieval |
+| `Andon` | `GetAndonEvents`, `GetAndonEventStatus`, `InsertEvent`, `DownloadLog` | `string`, `DataTable`, etc. | Event monitoring and update workflow |
+| `PAWS` | `GetOEEData`, `GetOeeDataByPlant`, `GetOeeDataByPlantReportingGroupMachine` | `string` | OEE data retrieval per plant/group/machine |
+| `HAWS` | `GetHPSVMachines`, `GetHPSVMachinesOrders` | `string` | HPSV machine and order data |
+
+The following service classes are present but contain no active `[WebMethod]` definitions in the inspected code:
+- `HYMD`
+- `OperationService`
+- `Template`
+
+Evidence table:
 
 | File | Class | Method | Evidence |
 |---|---|---|---|
-| [CLPS.Tests/CLPS.Tests.csproj](../../CLPS.Tests/CLPS.Tests.csproj) | Project | — | Declares test framework dependencies and reference to service project. |
-| [CLPS.Tests/LTBoxServiceTests.cs](../../CLPS.Tests/LTBoxServiceTests.cs) | `LTBoxServiceTests` | `IncrementBoxAsync_ShouldIncreaseValue` | Asserts values increase by one across cache increments. |
-| [CLPS.Tests/LTBoxServiceTests.cs](../../CLPS.Tests/LTBoxServiceTests.cs) | `LTBoxServiceTests` | `ShouldNotIncrement_WhenInsertFails` | Asserts two latest-box reads remain equal. |
-| [CLPS.Tests/LTBoxServiceTests.cs](../../CLPS.Tests/LTBoxServiceTests.cs) | `LTBoxServiceTests` | `Should_Not_Create_Duplicates` | Asserts parallel increment results are unique. |
-| [CLPS.Tests/CreateLTServiceTests.cs](../../CLPS.Tests/CreateLTServiceTests.cs) | `CreateLTServiceTests` | — | Test source is commented out. |
-| [CLPS.Tests/PrintOutputBatchServiceTests.cs](../../CLPS.Tests/PrintOutputBatchServiceTests.cs) | `PrintOutputBatchServiceTests` | — | Test source is commented out. |
+| [mesTE.Web.DAWN/DAWN.asmx.cs](mesTE.Web.DAWN/DAWN.asmx.cs) | `DAWN` | `Select`, `DedicatedSelect`, `SelectWithParameters`, `DedicatedSelectWithParameters`, `GetConnectionToken`, `ResumeConnectionToken`, `IsResultReady` | This is the generic data access API for raw database select operations using connection tokens. |
+| [mesTE.Web.DAWN/HDVE.asmx.cs](mesTE.Web.DAWN/HDVE.asmx.cs) | `HDVE` | `HDVEGetDataJSON`, `HDVEGetDataMachineBasedJSON`, `HDVCGetLicenseTagData` | This service returns JSON or typed objects, and it logs request lifecycle metrics through `WebServiceLogging`. |
+| [mesTE.Web.DAWN/MPAC.asmx.cs](mesTE.Web.DAWN/MPAC.asmx.cs) | `MPAC` | `IsValidUserPwd`, `GetUserData`, `SendBAPI` | User credential validation and BAPI submission are both implemented in the service layer. |
+| [mesTE.Web.DAWN/RINSYS.asmx.cs](mesTE.Web.DAWN/RINSYS.asmx.cs) | `RINSYS` | `Scale`, `OpenLock`, `Andon` | External HTTP integration points are implemented via configuration addresses in `Web.config`. |
+
+# Service Design
+
+The service design is domain-specific and largely CRUD/reporting oriented. Service methods often embody business queries, not generic REST resource operations. There is no layered application framework; instead, each web service class acts as a façade over database logic, with the majority of validation and transformation logic happening in `*_DAL` classes and utility methods.
+
+Key service responsibilities:
+
+1. `DAWN`
+   - generic asynchronous database query execution
+   - connection token management and result readiness
+   - connection cleanup and parameter-driven retry logic
+
+2. `HDVE`
+   - retrieves production and machine information
+   - supports table-based and JSON-based result formats
+   - includes license-tag retrieval and maintenance processing
+
+3. `MPAC`
+   - validates users against Active Directory
+   - compares user rights against `MPACMinimumRights`
+   - retrieves person and machine data
+   - invokes `MPACBAPI` for sending business transactions
+
+4. `RINSYS`
+   - scale integration to configured `ScaleAddress`
+   - E-Lock control to configured `ELockAddress`
+   - DQIP order and cavity data retrieval
+   - andon notification operations
+
+5. `SSRN` / `SSRR`
+   - receiving group and event management
+   - event status changes
+   - event comments and cost center updates
+
+6. `HYQS` / `dQCPC`
+   - quality inspection and event feed retrieval
+   - date-range and time-window queries
+   - machine filtering and parent-child event support
+
+The service layer relies on static data access methods and shared utilities rather than a DI-based services layer.
+
+| File | Class | Method | Evidence |
+|---|---|---|---|
+| [mesTE.Web.DAWN/DAWN.asmx.cs](mesTE.Web.DAWN/DAWN.asmx.cs) | `DAWN` | `AsyncSelectHandling` | The service runs database selects asynchronously in a `BackgroundWorker`, returning a process token and later retrieving a result using `AsyncWorkItem`. |
+| [mesTE.Web.DAWN/MPAC.asmx.cs](mesTE.Web.DAWN/MPAC.asmx.cs) | `MPAC` | `IsValidUserPwd`, `GetRightsByUser`, `GetUserData` | Authentication and authorization are directly implemented in the service, based on LDAP validation and local user rights lookup. |
+| [mesTE.Web.DAWN/RINSYS.asmx.cs](mesTE.Web.DAWN/RINSYS.asmx.cs) | `RINSYS` | `Scale`, `OpenLock` | Runtime endpoints are resolved from app settings and passed to DAL logic; the service class performs orchestration only. |
+| [mesTE.Web.DAWN/Classes/AsyncWorkItem.cs](mesTE.Web.DAWN/Classes/AsyncWorkItem.cs) | `AsyncWorkItem` | `ToString` and properties | The processing result is represented as a tokenized work item with select statement, parameters, connection entry, and result data. |
+
+# Data Access Design
+
+The data access layer is implemented as static DAL classes, each designed for a domain area or business process. An observed pattern is consistent across the solution:
+
+- service class calls `Domain_DAL.<method>`
+- `Domain_DAL` calls a domain-specific `Domain_SQL` builder or direct Oracle commands
+- domain metadata is resolved through `U_SITE_INFO` and optional central config
+- results are mapped to strongly typed classes or strings
+
+Examples:
+- `HDVE_DAL` manages HDVE queries
+- `MPAC_DAL` manages machine/person/security logic
+- `RINSYS_DAL` manages scale, lock, DQIP, and cavity functions
+- `ANDON_DAL` and `dQCPC_DAL` manage event data retrieval
+- `BASE_DAL` and `DAL` manage connection initialization and central connection resolution
+
+Important data access mechanisms implemented in source:
+- `DAL.GetConnectionInformation` reads a Hydra site from `U_SITE_INFO`
+- `SQL.GetSiteInfoSelectCommand` selects site metadata fields
+- `ConnectionFactory.GetUsableConnectionIndex` selects an available Oracle connection
+- `DawnParameters.GetParameters` loads runtime settings from `U_TE_DAWN_PARAM`
+- `WebServiceLogging.ConfigureConnection` initializes a logging database connection
+
+The infrastructure is designed around a single central site lookup and then site-specific Hydra database connections.
+
+```mermaid
+flowchart LR
+    A[Service] --> B[DAL Class]
+    B --> C[SQL Builder]
+    B --> D[SiteInfoEntry]
+    D --> E[U_SITE_INFO]
+    D --> F[Oracle Connection String]
+    F --> G[(Target Site Oracle Database)]
+    H[OTHER DAL Classes] --> C
+```
+
+| File | Class | Method | Evidence |
+|---|---|---|---|
+| [mesTE.Web.DAWN/DAL/DAL.cs](mesTE.Web.DAWN/DAL/DAL.cs) | `DAL` | `CreateSiteInfoConnection`, `GetConnectionInformation` | Site resolution uses a central config XML and then queries `U_SITE_INFO` for the hydra database metadata. |
+| [mesTE.Web.DAWN/DAL/SQL.cs](mesTE.Web.DAWN/DAL/SQL.cs) | `SQL` | `GetSiteInfoSelectCommand`, `GetParam`, `GetTabsSelectCountCommand` | Database metadata and service parameters are retrieved using parameterized Oracle commands. |
+| [mesTE.Web.DAWN/Classes/DawnParameters.cs](mesTE.Web.DAWN/Classes/DawnParameters.cs) | `DawnParameters` | `GetParameters` | Runtime service parameters are read from `U_TE_DAWN_PARAM`, including connection, retry, and cleanup settings. |
+| [mesTE.Web.DAWN/DAL/BASE_DAL.cs](mesTE.Web.DAWN/DAL/BASE_DAL.cs) | `BASE_DAL` | `InitializeConnection`, `ConfigureConnection` | Base data access handles initialization and site connection configuration. |
+
+# Database Design
+
+The code reveals a database architecture built around Oracle and a metadata table that identifies the target Hydra site. The solution reads from a central site table and then works against per-site operational tables.
+
+Observed database objects and usage:
+
+- `U_SITE_INFO`
+  - holds site metadata: company, customer number, Hydra user/password, alias, host, domain, SID, port, application server, test flag
+  - referenced in `SQL.GetSiteInfoSelectCommand`
+- `U_TE_DAWN_PARAM`
+  - holds parameters such as `MaximumConnections`, `MaximumRetry`, `RetryWaitTime`, `AllowTemporaryConnections`, `AllowCleanup`, `KeepDisposed`, `HasLog`
+  - referenced in `DawnParameters.GetParameters`
+- service-specific tables
+  - `U_TE_QCPC_EVENT` in `dQCPC_SQL`
+  - `U_TE_SSRW_EVENTS`, `U_TE_SSRW_EVENT_TYPES`, `U_TE_SSRW_RECV_GROUPS` in `ANDON_SQL`
+  - `U_TE_HPSV_*` tables in `HAWS_SQL`
+  - `U_TE_MMLP_*` and other domain tables in the project’s various SQL files
+  - `PERSONEN`, `MASCHINEN`, `U_TE_MPAC_LOG`, and other operational tables are referenced in DAL classes
+
+The database design is not a single monolithic schema in code; rather, the code reflects a common enterprise MES metadata table plus domain-specific application tables.
+
+```mermaid
+erDiagram
+    U_SITE_INFO ||--o{ U_TE_DAWN_PARAM : configures
+    U_SITE_INFO ||--o{ SiteConfig : resolves
+    U_SITE_INFO ||--o{ OperationalTables : site_scope
+    U_TE_QCPC_EVENT }o--|| U_SITE_INFO : per_site
+    U_TE_SSRW_EVENTS }o--|| U_SITE_INFO : per_site
+    U_TE_SSRW_RECV_GROUPS }o--|| U_SITE_INFO : per_site
+    U_TE_HPSV_ORDERS }o--|| U_SITE_INFO : per_site
+    PERSONEN }o--|| U_SITE_INFO : per_site
+```
+
+| File | Class | Method | Evidence |
+|---|---|---|---|
+| [mesTE.Web.DAWN/DAL/SQL.cs](mesTE.Web.DAWN/DAL/SQL.cs) | `SQL` | `GetSiteInfoSelectCommand` | `U_SITE_INFO` is used to resolve the target Hydra database alias and its connection settings. |
+| [mesTE.Web.DAWN/Classes/DawnParameters.cs](mesTE.Web.DAWN/Classes/DawnParameters.cs) | `DawnParameters` | `GetParameters` | Application service runtime settings are stored in `U_TE_DAWN_PARAM`. |
+| [mesTE.Web.DAWN/DAL/ANDON_SQL.cs](mesTE.Web.DAWN/DAL/ANDON_SQL.cs) | `ANDON_SQL` | `GetAndonEventsDataByCreateDateSQL`, `GetAndonEventsDataExtendedByCreateDateSQL` | Event processing maps to `U_TE_SSRW_EVENTS` and related event tables. |
+| [mesTE.Web.DAWN/DAL/dQCPC_SQL.cs](mesTE.Web.DAWN/DAL/dQCPC_SQL.cs) | `dQCPC_SQL` | `QCPCEventsDataSelect`, `QCPCEventsByDate` | QC event retrieval is mapped to `U_TE_QCPC_EVENT`. |
+| [mesTE.Web.DAWN/DAL/HAWS_SQL.cs](mesTE.Web.DAWN/DAL/HAWS_SQL.cs) | `HAWS_SQL` | query builders | HPSV scheduling and order data use tables such as `U_TE_HPSV_ORDERS`, `U_TE_HPSV_USER_MACH`, and related configuration tables. |
+
+# Business Rules and Processing Flows
+
+The implemented logic shows the following business flows:
+
+1. Site and connection resolution
+   - `DAL.GetConnectionInformation` loads alias and host details from `U_SITE_INFO`
+   - `ConnectionFactory` selects a usable Oracle connection and verifies the environment
+   - `DawnParameters` loads runtime tuning values from `U_TE_DAWN_PARAM`
+
+2. Generic async query execution
+   - `DAWN.DedicatedSelectWithParameters` creates an `AsyncWorkItem`
+   - a background worker executes the Oracle statement and stores the result
+   - the caller retrieves the result through the process token
+
+3. User authentication and authorization
+   - `MPAC.IsValidUserPwd` validates credentials against LDAP using `DirectoryEntry("LDAP://" + Properties.Settings.Default.Domain, user, pwd)`
+   - `MPAC.GetUserData` rejects invalid credentials and insufficient rights
+   - minimum rights threshold is defined in configuration: `MPACMinimumRights = 4`
+
+4. Quality control and event reporting
+   - `dQCPC` queries events by time range and optionally machine list
+   - `ANDON` retrieves events by create date or change date
+   - event payloads include response user, receiving group, description, status, dates, and source metadata
+
+5. Operating data retrieval
+   - `HAWS` retrieves production order and machine data
+   - `HDVE` provides current and next order, maintenance, and production details
+   - `PAWS` returns OEE data by plant and reporting group
+
+6. External device flow
+   - `RINSYS.Scale` loads `ScaleAddress` from configuration and calls the configured scale service
+   - `RINSYS.OpenLock` loads `ELockAddress` and calls the configured lock service
+   - these are not REST controller actions; they are web methods that call `RINSYS_DAL`
+
+Evidence table:
+
+| File | Class | Method | Evidence |
+|---|---|---|---|
+| [mesTE.Web.DAWN/DAWN.asmx.cs](mesTE.Web.DAWN/DAWN.asmx.cs) | `DAWN` | `DedicatedSelectWithParameters` | This method creates an asynchronous work item and returns a process token, enabling decoupled query execution. |
+| [mesTE.Web.DAWN/MPAC.asmx.cs](mesTE.Web.DAWN/MPAC.asmx.cs) | `MPAC` | `GetUserData` | The method uses LDAP validation, minimum rights enforcement, and then loads person data. |
+| [mesTE.Web.DAWN/RINSYS.asmx.cs](mesTE.Web.DAWN/RINSYS.asmx.cs) | `RINSYS` | `Scale`, `OpenLock`, `Andon` | Device orchestration is implemented through external addresses and service DAL methods. |
+| [mesTE.Web.DAWN/DAL/dQCPC_SQL.cs](mesTE.Web.DAWN/DAL/dQCPC_SQL.cs) | `dQCPC_SQL` | `QCPCEventsDataSelect` | The query filters event data by time window and optional machine list before returning QC results. |
+
+# Security Design
+
+Security is implemented in a mixed model:
+- Windows authentication is configured in `Web.config` (`<authentication mode="Windows"/>`)
+- Active Directory validation is used for MPAC user authentication (`DirectoryEntry`)
+- site connection credentials are stored in external XML / database metadata and decrypted at runtime via `Functions.Decrypt` using a fixed key `"mpdv"`
+- user rights are validated against a configured minimum threshold (`MPACMinimumRights`)
+- service methods log client host addresses using `HttpContext.Current.Request.UserHostAddress`
+
+The source does not show:
+- ASP.NET Core auth middleware
+- JWT or OAuth
+- per-endpoint [Authorize] attributes
+- explicit role-based claims authorization for all ASMX methods
+
+This is an important architectural fact: the solution relies on network-level and application-level checks, but not a formal identity framework.
+
+| File | Class | Method | Evidence |
+|---|---|---|---|
+| [mesTE.Web.DAWN/Web.config](mesTE.Web.DAWN/Web.config) | N/A | N/A | The web application is configured with Windows authentication and request filtering. |
+| [mesTE.Web.DAWN/MPAC.asmx.cs](mesTE.Web.DAWN/MPAC.asmx.cs) | `MPAC` | `IsValidUserPwd` | LDAP validation is performed using the supplied username/password against the configured domain. |
+| [mesTE.Web.DAWN/Classes/Functions.cs](mesTE.Web.DAWN/Classes/Functions.cs) | `Functions` | `Decrypt` | Credential values are decrypted in code using a fixed encryption key. |
+| [mesTE.Web.DAWN/Properties/Settings.Designer.cs](mesTE.Web.DAWN/Properties/Settings.Designer.cs) | `Settings` | `MPACMinimumRights` | Authorization threshold is defined as a project setting and enforced in service code. |
+
+# Error Handling and Logging
+
+The application uses a two-pronged pattern:
+- local exception handling inside `*_DAL` methods and service methods
+- centralized start/stop logging via `WebServiceLogging.LogWebServiceUseage`
+
+Implementation details:
+- `DAL.LastException` stores the last exception
+- `ConnectionFactory.LastException` and `ConnectionFactoryEntry.LastException` are used in connection resolution and processing
+- many service methods trap exceptions and return an error string or typed error payload
+- `Global.Application_Error` exists but is empty in source
+- `WebServiceLogging.LogWebServiceUseage` creates and opens an Oracle connection to log events
+
+Examples:
+- `HDVE.HDVCGetLicenseTagData` catches `Exception` and returns `Status = "SERVERERROR"`
+- `MPAC.SendBAPI` catches errors and returns a sanitized message
+- `MPAC.IsValidUserPwd` swallows exceptions and returns `false`
+- `RINSYS.Scale` and `RINSYS.OpenLock` log missing configuration problems and return sentinel values
+
+| File | Class | Method | Evidence |
+|---|---|---|---|
+| [mesTE.Web.DAWN/Classes/WebServiceLogging.cs](mesTE.Web.DAWN/Classes/WebServiceLogging.cs) | `WebServiceLogging` | `LogWebServiceUseage` | Every service method logs `START` and `STOP` records, capturing the caller host and request details. |
+| [mesTE.Web.DAWN/Classes/ConnectionFactory.cs](mesTE.Web.DAWN/Classes/ConnectionFactory.cs) | `ConnectionFactory` | `Initialize`, `Cleanup` | Connection-related exceptions are captured and stored in the `LastException` property. |
+| [mesTE.Web.DAWN/HDVE.asmx.cs](mesTE.Web.DAWN/HDVE.asmx.cs) | `HDVE` | `HDVCGetLicenseTagData` | The method catches exceptions and returns a typed response with `Status` and `ErrorMessage`. |
+| [mesTE.Web.DAWN/Global.asax.cs](mesTE.Web.DAWN/Global.asax.cs) | `Global` | `Application_Error` | The application error hook exists but has no implementation in the current source. |
+
+# Testing
+
+There is no automated test project in the solution for the web services. The project list and sources show a manual client harness instead of Unit Test or Integration Test projects.
+
+Implemented test/support patterns:
+- `HDVEClient` is a Windows Forms application
+- `Program.Main` launches `LicensetagTest`
+- `LicensetagTest.button1_Click` calls the generated HDVE web service proxy, sets credentials to `System.Net.CredentialCache.DefaultCredentials`, and reads the license tag response
+
+This indicates a manual validation approach rather than a formal automated test suite.
+
+| File | Class | Method | Evidence |
+|---|---|---|---|
+| [HDVEClient/Program.cs](HDVEClient/Program.cs) | `Program` | `Main` | The application entry point launches the `LicensetagTest` form. |
+| [HDVEClient/LicensetagTest.cs](HDVEClient/LicensetagTest.cs) | `LicensetagTest` | `button1_Click` | The client invokes the `HDVCGetLicenseTagData` web method and displays the returned status and payload. |
+| [mesTE.Web.DAWN/mesTE.Web.DAWN.sln](mesTE.Web.DAWN.sln) | N/A | N/A | The solution file contains the main app and the HDVE client, but no separate test project is included. |
+
+This document is based solely on the source code present in the solution. It reflects implemented functionality, configuration, and runtime patterns only, and intentionally excludes unsupported assumptions.
